@@ -1,5 +1,7 @@
 import libnx
 
+// this file defines some functions and constants that are expected to exist
+
 // key constants
 
 // Sysmodules should not use applet*.
