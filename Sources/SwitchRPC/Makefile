@@ -63,7 +63,7 @@ LIBS := -lnx
 
 # Swift specific flags
 # SWIFTC := swiftc
-SWIFTC := /Users/llsc12/.swiftly/bin/swiftc
+SWIFTC := /Users/llsc12/Library/Developer/Toolchains/swift-6.2-DEVELOPMENT-SNAPSHOT-2025-07-09-a.xctoolchain/usr/bin/swiftc
 
 SWIFT_SRCS := $(wildcard ../*.swift)
 INCLUDE_DIR := ./../../Support
@@ -79,6 +79,8 @@ SWIFT_VERSION := 6
 BUILD_DIR := swift
 OBJ_DIR := $(BUILD_DIR)/obj
 LL_DIR := $(BUILD_DIR)/ll
+
+# end of swift specific flags
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing

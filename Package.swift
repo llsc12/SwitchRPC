@@ -12,12 +12,20 @@ let package = Package(
 			name: "SwitchRPC",
 			dependencies: [
 				"Support",
+			],
+			swiftSettings: [
+				.enableExperimentalFeature("Embedded"),
+				.unsafeFlags(["-wmo"])
 			]
 		),
 		.target(
 			name: "SwitchRPCConfig",
 			dependencies: [
 				"Support",
+			],
+			swiftSettings: [
+				.enableExperimentalFeature("Embedded"),
+				.unsafeFlags(["-wmo"])
 			]
 		),
 		.systemLibrary(

@@ -16,3 +16,4 @@ DerivedData/
 /Sources/SwitchRPCConfig/.build
 *.nacp
 SwitchRPC.zip
+/.swiftpm

@@ -1,9 +1,14 @@
 module libnx [system] {
-    umbrella header "/opt/devkitpro/libnx/include/switch.h"
-    export *
+	umbrella header "/opt/devkitpro/libnx/include/switch.h"
+	export *
 }
 
 module std [system] {
-    umbrella header "/opt/devkitpro/devkitA64/aarch64-none-elf/include/stdio.h"
-    export *
+	umbrella header "/opt/devkitpro/devkitA64/aarch64-none-elf/include/stdio.h"
+	export *
+}
+
+module curl [system] {
+	umbrella header "curl_umbrella.h"
+	export *
 }

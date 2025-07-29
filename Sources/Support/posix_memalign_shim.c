@@ -14,3 +14,6 @@ int posix_memalign(void **memptr, size_t alignment, size_t size) {
     *memptr = ptr;
     return 0;
 }
+
+// _getentropy_r stub
+int _getentropy_r(void *reent, void *buffer, size_t length) { return -1; }
