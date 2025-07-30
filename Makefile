@@ -50,7 +50,7 @@ SwitchRPCConfig:
 	$(MAKE) -C Sources/SwitchRPCConfig
 
 clean:
-	$(MAKE) -C Sources/SwitchRPC clean
-	$(MAKE) -C Sources/SwitchRPCConfig clean
-	rm -rf $(OUT_DIR)
-	rm -rf .build
+	@$(MAKE) -C Sources/SwitchRPC clean
+	@$(MAKE) -C Sources/SwitchRPCConfig clean
+	@rm -rf $(OUT_DIR)
+	@rm -rf .build

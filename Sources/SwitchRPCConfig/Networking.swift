@@ -194,6 +194,15 @@ struct Request {
 
 		return .init(statusCode: responseCode, data: responseString)
 	}
+	
+	// Helper Methods
+	
+	static func curlInit() {
+		curl_global_init(Int(CURL_GLOBAL_DEFAULT))
+	}
+	static func curlCleanup() {
+		curl_global_cleanup()
+	}
 
 }
 

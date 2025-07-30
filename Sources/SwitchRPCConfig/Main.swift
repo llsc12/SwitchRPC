@@ -56,9 +56,7 @@ struct SwitchRPCConfig {
 
 		// networking
 		socketInitializeDefault()
-
-		curl_global_init(Int(CURL_GLOBAL_DEFAULT))
-		defer { curl_global_cleanup() }
+		Request.curlInit(); defer { Request.curlCleanup() }
 
 		// config game pad
 		padConfigureInput(1, HidNpadStyleSet_NpadStandard.rawValue)
