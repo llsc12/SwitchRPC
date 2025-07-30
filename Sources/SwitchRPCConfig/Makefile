@@ -62,13 +62,16 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
-LIBS := -lnx `curl-config --libs`
+LIBS := -lnx `curl-config --libs` -ljson-c
 
 # Swift specific flags
 # SWIFTC := swiftc
-SWIFTC := /Users/llsc12/Library/Developer/Toolchains/swift-6.2-DEVELOPMENT-SNAPSHOT-2025-07-09-a.xctoolchain/usr/bin/swiftc
+SWIFT_TOOLCHAIN := /Users/llsc12/Library/Developer/Toolchains/swift-6.2-DEVELOPMENT-SNAPSHOT-2025-07-09-a.xctoolchain
+SWIFTC := $(SWIFT_TOOLCHAIN)/usr/bin/swiftc
+UNICODE_SUPPORT = $(SWIFT_TOOLCHAIN)/usr/lib/swift/embedded/aarch64-none-none-elf/libswiftUnicodeDataTables.a
 
-SWIFT_SRCS := $(wildcard ../*.swift)
+# Recursive Swift file discovery
+SWIFT_SRCS := $(shell find .. -name "*.swift" -type f)
 INCLUDE_DIR := ./../../Support
 MODULEMAP := $(INCLUDE_DIR)/module.modulemap
 SHIM_HEADER := $(INCLUDE_DIR)/header.h
@@ -92,6 +95,14 @@ LL_DIR := $(BUILD_DIR)/ll
 LIBDIRS	:= $(PORTLIBS) $(LIBNX)
 
 #---------------------------------------------------------------------------------
+# Recursive file discovery functions
+#---------------------------------------------------------------------------------
+rwildcard=$(foreach d,$(wildcard $(1:=/*)),$(call rwildcard,$d,$2) $(filter $(subst *,%,$2),$d))
+
+# Function to get all subdirectories recursively
+get_all_dirs = $(sort $(dir $(call rwildcard,$(1),*)))
+
+#---------------------------------------------------------------------------------
 # no real need to edit anything past this point unless you need to add additional
 # rules for different file extensions
 #---------------------------------------------------------------------------------
@@ -101,15 +112,19 @@ ifneq ($(BUILD),$(notdir $(CURDIR)))
 export OUTPUT	:=	$(CURDIR)/$(TARGET)
 export TOPDIR	:=	$(CURDIR)
 
-export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
-			$(foreach dir,$(DATA),$(CURDIR)/$(dir))
+# Get all directories recursively for VPATH
+ALL_SOURCE_DIRS := $(foreach dir,$(SOURCES),$(call get_all_dirs,$(CURDIR)/$(dir)))
+ALL_DATA_DIRS := $(foreach dir,$(DATA),$(call get_all_dirs,$(CURDIR)/$(dir)))
+
+export VPATH	:=	$(ALL_SOURCE_DIRS) $(ALL_DATA_DIRS)
 
 export DEPSDIR	:=	$(CURDIR)/$(BUILD)
 
-CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
-CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
-SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
-BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
+# Recursive file discovery
+CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(call rwildcard,$(dir),*.c)))
+CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(call rwildcard,$(dir),*.cpp)))
+SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(call rwildcard,$(dir),*.s)))
+BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(call rwildcard,$(dir),*.*)))
 
 #---------------------------------------------------------------------------------
 # use CXX for linking C++ projects, CC for standard C
@@ -130,7 +145,9 @@ export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o) $(OBJ_D
 export OFILES 	  :=	$(OFILES_BIN) $(OFILES_SRC)
 export HFILES_BIN	:=	$(addsuffix .h,$(subst .,_,$(BINFILES)))
 
-export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
+# Recursive include directory discovery
+ALL_INCLUDE_DIRS := $(foreach dir,$(INCLUDES),$(call get_all_dirs,$(CURDIR)/$(dir)))
+export INCLUDE	:=	$(foreach dir,$(ALL_INCLUDE_DIRS),-I$(dir)) \
 			$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
 			-I$(CURDIR)/$(BUILD)
 
@@ -225,7 +242,8 @@ $(OUTPUT).nso	:	$(OUTPUT).elf
 
 endif
 
-$(OUTPUT).elf	:	$(OFILES)
+$(OUTPUT).elf : $(OFILES)
+	$(LD) $(LDFLAGS) -o $@ $(OFILES) $(LIBPATHS) $(LIBS) -Wl,--whole-archive $(UNICODE_SUPPORT) -Wl,--no-whole-archive
 
 $(OFILES_SRC)	: $(HFILES_BIN)
 

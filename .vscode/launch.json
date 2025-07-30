@@ -1,0 +1,28 @@
+{
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": [
+        "swift"
+      ],
+      "args": [],
+      "cwd": "${workspaceFolder:SwitchRPC}",
+      "name": "Debug SwitchRPCConfig",
+      "program": "${workspaceFolder:SwitchRPC}/.build/debug/SwitchRPCConfig",
+      "preLaunchTask": "swift: Build Debug SwitchRPCConfig"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": [
+        "swift"
+      ],
+      "args": [],
+      "cwd": "${workspaceFolder:SwitchRPC}",
+      "name": "Release SwitchRPCConfig",
+      "program": "${workspaceFolder:SwitchRPC}/.build/release/SwitchRPCConfig",
+      "preLaunchTask": "swift: Build Release SwitchRPCConfig"
+    }
+  ]
+}

@@ -9,6 +9,11 @@ module std [system] {
 }
 
 module curl [system] {
-	umbrella header "curl_umbrella.h"
+	umbrella header "curl/curl_umbrella.h"
+	export *
+}
+
+module json [system] {
+	umbrella header "json/json_umbrella.h"
 	export *
 }
