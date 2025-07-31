@@ -240,7 +240,7 @@ $(OUTPUT).nso	:	$(OUTPUT).elf
 endif
 
 $(OUTPUT).elf : $(OFILES)
-	$(LD) $(LDFLAGS) -o $@ $(OFILES) $(LIBPATHS) $(LIBS) -Wl,--whole-archive $(UNICODE_SUPPORT) -Wl,--no-whole-archive
+	@$(LD) $(LDFLAGS) -o $@ $(OFILES) $(LIBPATHS) $(LIBS) -Wl,--whole-archive $(UNICODE_SUPPORT) -Wl,--no-whole-archive
 
 $(OFILES_SRC)	: $(HFILES_BIN)
 

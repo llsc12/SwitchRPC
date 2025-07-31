@@ -204,6 +204,27 @@ struct Request {
 		curl_global_cleanup()
 	}
 
+	static func URLEncode(_ string: String) -> String {
+		return string.withCString { cstr in
+			let escaped = curl_easy_escape(nil, cstr, 0)
+			defer { if escaped != nil { curl_free(escaped) } }
+			if let escaped {
+				return String(cString: escaped)
+			}
+			return string
+		}
+	}
+	static func URLDecode(_ string: String) -> String {
+		return string.withCString { cstr in
+			var outLength: Int32 = 0
+			let decoded = curl_easy_unescape(nil, cstr, 0, &outLength)
+			defer { if decoded != nil { curl_free(decoded) } }
+			if let decoded = decoded {
+				return String(cString: decoded)
+			}
+			return string
+		}
+	}
 }
 
 struct Response {

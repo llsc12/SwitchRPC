@@ -17,3 +17,8 @@ module json [system] {
 	umbrella header "json/json_umbrella.h"
 	export *
 }
+
+module webserver [system] {
+	umbrella header "webserver/server.hpp"
+	export *
+}
