@@ -7,6 +7,7 @@
 
 import curl
 import libnx
+import devkitpro
 
 struct Request {
 	// Properties
@@ -34,7 +35,6 @@ struct Request {
 	enum RequestError: Error, LocalizedError {
 		case initializationFailed
 		case performFailed(CURLcode)
-		case invalidResponse
 		case timeoutExceeded
 		case unknownError
 
@@ -44,8 +44,6 @@ struct Request {
 				return "Failed to initialize the request."
 			case .performFailed(let code):
 				return "Request failed with error code: \(code.rawValue)"
-			case .invalidResponse:
-				return "Received an invalid response from the server."
 			case .timeoutExceeded:
 				return "The request timed out."
 			case .unknownError:
@@ -136,39 +134,45 @@ struct Request {
 		}
 
 		// Data
+		var postBodyPtr: UnsafeMutablePointer<CChar>?
 		if let data {
-			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data)
+			// Allocate memory and copy string
+			postBodyPtr = strdup(data)  // NULL-terminated
+			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postBodyPtr)
+			curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, data.utf8.count)
 		}
+		defer { if postBodyPtr != nil { postBodyPtr?.deallocate() } }
 
 		// Timeout
 		curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout)
 
 		// Follow redirects
-		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, followRedirects ? 1 : 0)
+		if followRedirects {
+			curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1)
+		}
 
 		// Response handling
 		var responseData: [UInt8] = []
 		var responseCode: Int = 0
 
 		let writeCallback: curl_write_callback = {
-				(contents, size, nmemb, userdata) -> Int in
-				let realsize = size * nmemb
-				guard let contents, let userdata, realsize > 0 else { return 0 }
+			(contents, size, nmemb, userdata) -> Int in
+			let realsize = size * nmemb
+			guard let contents, let userdata, realsize > 0 else { return 0 }
 
-				let buffer = userdata.assumingMemoryBound(to: [UInt8].self)
-				
-				// Reserve capacity for better performance
-				buffer.pointee.reserveCapacity(buffer.pointee.count + Int(realsize) - 1)
-				
-				// Copy bytes one by one, but only the exact amount
-				for i in 0..<Int(realsize) - 1 {
-					let byte = UInt8(contents.advanced(by: i).pointee)
-					buffer.pointee.append(byte)
-				}
+			let buffer = userdata.assumingMemoryBound(to: [UInt8].self)
 
-				return realsize
+			// Reserve capacity for better performance
+			buffer.pointee.reserveCapacity(buffer.pointee.count + Int(realsize) - 1)
+
+			// Copy bytes one by one, but only the exact amount
+			for i in 0..<Int(realsize) {
+				let byte = UInt8(contents.advanced(by: i).pointee)
+				buffer.pointee.append(byte)
 			}
 
+			return realsize
+		}
 
 		// Pass pointer to buffer using CURLOPT_WRITEDATA, and set write function
 		try withUnsafeMutablePointer(to: &responseData) {
@@ -184,19 +188,18 @@ struct Request {
 
 			// Check response, also set response code
 			curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &responseCode)
-			if responseCode < 200 || responseCode >= 300 {
-				throw RequestError.invalidResponse
-			}
 		}
 
-		// Convert response data to String (handle null-termination)
-		let responseString = String(cString: responseData.withUnsafeBufferPointer { $0.baseAddress! })
+		if responseData.last != 0 { responseData.append(0) }
+		let responseString = String(
+			cString: responseData.withUnsafeBufferPointer { $0.baseAddress! }
+		)
 
 		return .init(statusCode: responseCode, data: responseString)
 	}
-	
+
 	// Helper Methods
-	
+
 	static func curlInit() {
 		curl_global_init(Int(CURL_GLOBAL_DEFAULT))
 	}
@@ -233,10 +236,49 @@ struct Response {
 }
 
 // cURL Shims
-func curl_easy_setopt(_ curl: UnsafeMutableRawPointer, _ option: CURLoption, _ value: String) { curl_easy_setopt_str(curl, option, value) }
-func curl_easy_setopt(_ curl: UnsafeMutableRawPointer, _ option: CURLoption, _ value: Int) { curl_easy_setopt_long(curl, option, value) }
-func curl_easy_setopt(_ curl: UnsafeMutableRawPointer, _ option: CURLoption, _ value: curl_write_callback) { curl_easy_setopt_ptr(curl, option, unsafeBitCast(value, to: UnsafeMutableRawPointer.self)) }
-func curl_easy_setopt(_ curl: UnsafeMutableRawPointer, _ option: CURLoption, _ value: UnsafeMutablePointer<curl_slist>?) { curl_easy_setopt_ptr(curl, option, value) }
-func curl_easy_setopt(_ curl: UnsafeMutableRawPointer, _ option: CURLoption, _ value: UnsafeMutablePointer<[UInt8]>?) { curl_easy_setopt_ptr(curl, option, value) }
-func curl_easy_getinfo(_ curl: UnsafeMutableRawPointer, _ option: CURLINFO, _ value: UnsafeMutablePointer<Int>?) { curl_easy_getinfo_long(curl, option, value) }
-func curl_easy_getinfo(_ curl: UnsafeMutableRawPointer, _ option: CURLINFO, _ value: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) { curl_easy_getinfo_str(curl, option, value) }
+func curl_easy_setopt(
+	_ curl: UnsafeMutableRawPointer,
+	_ option: CURLoption,
+	_ value: String
+) { curl_easy_setopt_str(curl, option, value) }
+func curl_easy_setopt(
+	_ curl: UnsafeMutableRawPointer,
+	_ option: CURLoption,
+	_ value: Int
+) { curl_easy_setopt_long(curl, option, value) }
+func curl_easy_setopt(
+	_ curl: UnsafeMutableRawPointer,
+	_ option: CURLoption,
+	_ value: curl_write_callback
+) {
+	curl_easy_setopt_ptr(
+		curl,
+		option,
+		unsafeBitCast(value, to: UnsafeMutableRawPointer.self)
+	)
+}
+func curl_easy_setopt(
+	_ curl: UnsafeMutableRawPointer,
+	_ option: CURLoption,
+	_ value: UnsafeMutablePointer<curl_slist>?
+) { curl_easy_setopt_ptr(curl, option, value) }
+func curl_easy_setopt(
+	_ curl: UnsafeMutableRawPointer,
+	_ option: CURLoption,
+	_ value: UnsafeMutablePointer<[UInt8]>?
+) { curl_easy_setopt_ptr(curl, option, value) }
+func curl_easy_setopt(
+	_ curl: UnsafeMutableRawPointer,
+	_ option: CURLoption,
+	_ value: UnsafeMutablePointer<CChar>?
+) { curl_easy_setopt_str(curl, option, value) }
+func curl_easy_getinfo(
+	_ curl: UnsafeMutableRawPointer,
+	_ option: CURLINFO,
+	_ value: UnsafeMutablePointer<Int>?
+) { curl_easy_getinfo_long(curl, option, value) }
+func curl_easy_getinfo(
+	_ curl: UnsafeMutableRawPointer,
+	_ option: CURLINFO,
+	_ value: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) { curl_easy_getinfo_str(curl, option, value) }

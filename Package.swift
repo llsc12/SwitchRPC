@@ -14,7 +14,6 @@ let package = Package(
 				"Support",
 			],
 			swiftSettings: [
-				.interoperabilityMode(.Cxx),
 				.enableExperimentalFeature("Embedded"),
 				.unsafeFlags(["-wmo"])
 			]
@@ -25,13 +24,10 @@ let package = Package(
 				"Support",
 			],
 			swiftSettings: [
-				.interoperabilityMode(.Cxx),
 				.enableExperimentalFeature("Embedded"),
 				.unsafeFlags(["-wmo"])
 			]
 		),
-		.systemLibrary(
-			name: "Support",
-		),
+		.systemLibrary(name: "Support"),
 	]
 )

@@ -80,6 +80,7 @@ extension JSONValue {
 			var dict: [String: JSONValue] = [:]
 			// Use a C helper to get keys (see note below)
 			if let keysArray = json_object_object_get_keys(obj) {
+				// There's variadic functions so we do the variadic function calls in c
 				let arrayLen = json_object_array_length(keysArray)
 				for i in 0..<arrayLen {
 					if let keyCStringObj = json_object_array_get_idx(keysArray, i) {
@@ -164,5 +165,46 @@ extension JSONValue {
 	public var object: [String: JSONValue]? {
 		if case .object(let v) = self { return v }
 		return nil
+	}
+}
+
+// i wanna feel happy
+
+typealias Codable = Encodable & Decodable
+
+protocol Encodable {
+	func encode() -> String
+}
+protocol Decodable {
+	init(json: JSONValue) throws(DecodingError)
+}
+
+enum DecodingError: LocalizedError {
+	case failedTokenization
+	case invalidType(expected: String, actual: String)
+	case missingKey(String)
+
+	var errorDescription: String? {
+		switch self {
+		case .invalidType(let expected, let actual):
+			return "Expected type \(expected), but got \(actual)"
+		case .missingKey(let key):
+			return "Missing required key: \(key)"
+		case .failedTokenization:
+			return "Failed to tokenize JSON data"
+		}
+	}
+}
+
+extension JSONValue {
+	static func decode<T: Decodable>(_ type: T.Type, from data: String) throws(DecodingError) -> T {
+		guard let json = JSONValue.parse(from: data) else {
+			throw DecodingError.failedTokenization
+		}
+		return try T(json: json)
+	}
+	
+	static func encode<T: Encodable>(_ value: T) -> String {
+		return value.encode()
 	}
 }

@@ -3,6 +3,10 @@ Discord Rich Presence for the Nintendo Switch
 
 Does not rely on anything other than your Switch and a mobile device for logging in. Runs in the background and keeps your rich presence up to date with whatever title is open.
 
+This is better than what's out there as of writing because it doesn't rely on an online computer on the local network to function. It all happens on the Switch itself.
+
+## Nerd details
+
 Relies on tinfoil.io for game artworks. Uses Discord Social SDK endpoints to push presence data.
 
 Written in Embedded Swift!
@@ -28,3 +32,7 @@ All pages from my domain are static and hosted from GitHub Pages, you can examin
 # Retrospect
 
 I really hate the horrific makefile, soon i might make a super epic swiftpm based build process and template for this. if i do that ill restructure this project.
+
+## Risks
+
+Should be minimal probably, I use API routes from the Discord Social SDK. Their domain is `gaming-sdk.com` :sob: anyways it also uses discord headless sessions. I don't think any bans will happen but don't blame me, you're accepting the risk by using this software. 

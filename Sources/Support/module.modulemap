@@ -1,10 +1,10 @@
 module libnx [system] {
-	umbrella header "/opt/devkitpro/libnx/include/switch.h"
+	umbrella header "libnx/libnx_umbrella.h"
 	export *
 }
 
-module std [system] {
-	umbrella header "/opt/devkitpro/devkitA64/aarch64-none-elf/include/stdio.h"
+module devkitpro [system] {
+	umbrella header "devkitpro/dkp_umbrella.h"
 	export *
 }
 
@@ -15,10 +15,5 @@ module curl [system] {
 
 module json [system] {
 	umbrella header "json/json_umbrella.h"
-	export *
-}
-
-module webserver [system] {
-	umbrella header "webserver/server.hpp"
 	export *
 }
