@@ -197,13 +197,15 @@ enum DecodingError: LocalizedError {
 }
 
 extension JSONValue {
-	static func decode<T: Decodable>(_ type: T.Type, from data: String) throws(DecodingError) -> T {
+	static func decode<T: Decodable>(_ type: T.Type, from data: String)
+		throws(DecodingError) -> T
+	{
 		guard let json = JSONValue.parse(from: data) else {
 			throw DecodingError.failedTokenization
 		}
 		return try T(json: json)
 	}
-	
+
 	static func encode<T: Encodable>(_ value: T) -> String {
 		return value.encode()
 	}

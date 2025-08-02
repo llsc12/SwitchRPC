@@ -6,8 +6,8 @@
 //
 
 import curl
-import libnx
 import devkitpro
+import libnx
 
 struct Request {
 	// Properties

@@ -187,10 +187,9 @@ class WebServer {
 		guard let ipCString = inet_ntoa(serv_addr.sin_addr) else { return "" }
 		formatAddress(&buffer, buffer.count, ipCString, Int32(port ?? self.port))  // snprintf is variadic so i used c and made a helper function
 
-		return String(cString: buffer)
+		return String(cStr: buffer)
 	}
 	public func getIPAddress() -> String {
-		var buffer = [CChar](repeating: 0, count: 64)
 		var serv_addr = sockaddr_in()
 		serv_addr.sin_addr.s_addr = in_addr_t(gethostid())
 
@@ -206,7 +205,7 @@ class WebServer {
 		guard bytesReceived > 0 else { return }
 
 		buffer[bytesReceived] = 0 // good way to null-terminate
-		let requestString = String(cString: buffer)
+		let requestString = String(cStr: buffer)
 		guard let requestLine = requestString.split(separator: "\r\n").first
 		else { return }
 

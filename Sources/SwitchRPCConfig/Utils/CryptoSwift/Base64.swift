@@ -271,6 +271,6 @@ enum Base64 {
 extension UInt8 {
 	// Convert UInt8 representing ASCII (0...127) to Character
 	var asciiCharacter: Character {
-		String(cString: [self, 0]).first ?? "?"
+		String(cStr: [self, 0]).first ?? "?"
 	}
 }

@@ -30,6 +30,13 @@ struct SwitchRPCConfig {
 
 		var pad: PadState = .init()
 		padInitializeDefault(&pad)
+		
+		pmdmntInitialize()
+		defer { pmdmntExit() }
+		pminfoInitialize()
+		defer { pminfoExit() }
+		nsInitialize()
+		defer { nsExit() }
 
 		print(
 			"""
@@ -132,7 +139,6 @@ struct SwitchRPCConfig {
 				threadClose(&thread)  // cleanup
 
 				let dcode = state.server.code
-				let dstate = state.server.state
 				
 				print("\nReceived auth data, retrieving tokens...\n\n")
 				
@@ -147,6 +153,11 @@ struct SwitchRPCConfig {
 						print("Failed: \(error.errorDescription ?? "Unknown error")")
 					}
 				}
+			}
+			
+			if padGetButtonsDown(&pad) & UInt64(HidNpadButton_B.rawValue) != 0 {
+				let data = try? Utilities.GetCurrentProcessData()
+				print("app: \(data?.name ?? "No App Open")")
 			}
 
 			consoleUpdate(nil)  // push new frame
