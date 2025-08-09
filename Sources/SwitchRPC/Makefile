@@ -62,6 +62,7 @@ LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*
 LIBS := -lnx `curl-config --libs` -ljson-c
 
 # Swift specific flags
+CFLAGS += -DNXSysmodule
 # SWIFTC := swiftc
 SWIFT_TOOLCHAIN := /Users/llsc12/Library/Developer/Toolchains/swift-6.2-DEVELOPMENT-SNAPSHOT-2025-07-09-a.xctoolchain
 SWIFTC := $(SWIFT_TOOLCHAIN)/usr/bin/swiftc

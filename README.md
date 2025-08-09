@@ -13,13 +13,13 @@ Written in Embedded Swift!
 
 ## Privacy
 
-The OAuth2 process happens through the Switch showing a web page at `https://static.llsc12.me/qr?ip=<switch_ip>&url=<discord_auth>`.
+The OAuth2 process happens through the Switch showing a web page at `https://static.llsc12.me/discord/qr?url=<discord_auth_shim>`.
 
-This page is a static page that renders a QR code for you to scan on your mobile device.
+This page is a static page that renders a QR code for you to scan on your mobile device, leading to `https://static.llsc12.me/discord?ip=<switch_ip>&auth=<discord_oauth2_url>`.
 
-The Discord OAuth2 flow will redirect to `https://static.llsc12.me/discord` with the code and state params from the Discord OAuth2 flow, and this will redirect again to the IP address of the Switch, which will be picked up by the Switch and you will be authenticated.
+The Discord OAuth2 flow will redirect back to `https://static.llsc12.me/discord` again, with the code and state params from the Discord OAuth2 flow. The page will redirect again to the IP address of the Switch, which will be picked up by the Switch and you will be authenticated.
 
-All pages from my domain are static and hosted from GitHub Pages, you can examine them with inspect element to see exactly what they do.
+All pages from this subdomain are static and hosted on GitHub Pages, you can examine them with inspect element to see exactly what they do.
 
 ## Credits
 
@@ -27,7 +27,7 @@ All pages from my domain are static and hosted from GitHub Pages, you can examin
 - libnx innit
 - also using libcurl libjson-c ykyk
 - eembedded swift is rly cool man
-- ty toby you made me actually think about the rpc process 
+- ty toby you made me actually think about the rpc process lol
 
 # Retrospect
 
@@ -36,3 +36,5 @@ I really hate the horrific makefile, soon i might make a super epic swiftpm base
 ## Risks
 
 Should be minimal probably, I use API routes from the Discord Social SDK. Their domain is `gaming-sdk.com` :sob: anyways it also uses discord headless sessions. I don't think any bans will happen but don't blame me, you're accepting the risk by using this software. 
+
+Also I have to store the Discord refresh tokens somewhere, and unfortunately this means they could be taken by malicious software. Beware of malicious software. The login data is encrypted with your system info, at a minimum you won't accidentally leak it maybe.

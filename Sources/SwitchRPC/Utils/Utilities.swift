@@ -49,7 +49,7 @@ extension Dictionary<String, String> {
 }
 
 enum Utilities {
-	static func GetCurrentProcessData() throws(UtilError) -> (pid: UInt, tid: UInt, name: String, username: String) {
+	static func GetCurrentProcessData() throws(UtilError) -> (pid: UInt, tid: UInt, title: String, username: String) {
 		var pid: UInt64 = 0
 		var tid: UInt64 = 0
 

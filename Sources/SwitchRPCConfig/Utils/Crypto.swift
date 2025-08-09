@@ -5,6 +5,8 @@
 //  Created by Lakhan Lothiyi on 31/07/2025.
 //
 
+import libnx
+
 enum Crypto {
 	// MARK: - Random Bytes
 	static func randomBytes(count: Int) -> [UInt8]? {
@@ -46,5 +48,28 @@ enum Crypto {
 		return out.withUnsafeBufferPointer { ptr in
 			String(cString: UnsafePointer<CChar>(OpaquePointer(ptr.baseAddress!)))
 		}
+	}
+
+	static func deviceEncryptionKey() -> String {
+		var serial = SetSysSerialNumber()
+		setsysGetSerialNumber(&serial)
+		// Convert the tuple (char array) to [UInt8]
+		var bytes = withUnsafeBytes(of: serial.number) { rawPtr -> [UInt8] in
+			return Array(rawPtr.prefix(24))
+		}
+		// null-terminate the byte array
+		if bytes.last != 0 { bytes.append(0) }
+		
+		// Convert to a Swift String using C-string constructor
+		return String(cStr: bytes)
+	}
+
+	static func encrypt(_ data: String, with key: String) -> String {
+		// Implement encryption logic here
+		return ""
+	}
+	static func decrypt(_ data: String, with key: String) -> String {
+		// Implement decryption logic here
+		return ""
 	}
 }

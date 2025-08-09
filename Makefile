@@ -54,3 +54,4 @@ clean:
 	@$(MAKE) -C Sources/SwitchRPCConfig clean
 	@rm -rf $(OUT_DIR)
 	@rm -rf .build
+	@rm -rf SwitchRPC.zip SwitchRPC.lst SwitchRPCConfig.lst
