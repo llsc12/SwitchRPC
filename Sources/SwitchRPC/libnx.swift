@@ -51,17 +51,23 @@ func appInit() {
 
 	// Add other services you want to use here.
 	var socketConfig = SocketInitConfig()
-	socketConfig.tcp_tx_buf_size = 0x8000 // 32 KiB
+	socketConfig.tcp_tx_buf_size = 0x8000  // 32 KiB
 	socketConfig.tcp_rx_buf_size = 0x8000
-	socketConfig.tcp_tx_buf_max_size = 0x20000 // 128 KiB
+	socketConfig.tcp_tx_buf_max_size = 0x20000  // 128 KiB
 	socketConfig.tcp_rx_buf_max_size = 0x20000
 	socketConfig.udp_tx_buf_size = 0x0
 	socketConfig.udp_rx_buf_size = 0x0
 	socketConfig.sb_efficiency = 1
 	socketConfig.bsd_service_type = BsdServiceType_Auto
 	socketInitialize(&socketConfig)
+	
 	Request.curlInit()
 	
+	pmdmntInitialize()
+	pminfoInitialize()
+	nsInitialize()
+	setInitialize()
+
 	// Close the service manager session.
 	smExit()
 }
@@ -70,8 +76,13 @@ func appInit() {
 @_cdecl("__appExit")
 func appExit() {
 	// Close extra services you added to __appInit here.
+	pminfoExit()
+	nsExit()
+	pmdmntExit()
+	setExit()
 	Request.curlCleanup()
 	socketExit()
+
 	fsdevUnmountAll()  // Disable this if you don't want to use the SD card filesystem.
 	fsExit()  // Disable this if you don't want to use the filesystem.
 	//timeExit(); // Enable this if you want to use time.

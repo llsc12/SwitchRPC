@@ -75,7 +75,6 @@ UNICODE_SUPPORT = $(SWIFT_TOOLCHAIN)/usr/lib/swift/embedded/aarch64-none-none-el
 SWIFT_SRCS := $(shell find .. -name "*.swift" -type f)
 INCLUDE_DIR := ./../../Support
 MODULEMAP := $(INCLUDE_DIR)/module.modulemap
-SHIM_HEADER := $(INCLUDE_DIR)/header.h
 
 SWIFT_CFLAGS := \
   -I/opt/devkitpro/libnx/include \
@@ -142,7 +141,7 @@ endif
 #---------------------------------------------------------------------------------
 
 export OFILES_BIN	:=	$(addsuffix .o,$(BINFILES))
-export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o) $(OBJ_DIR)/app.o $(OBJ_DIR)/posix_memalign_shim.o
+export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o) $(OBJ_DIR)/app.o $(OBJ_DIR)/support_extra.o
 export OFILES 	  :=	$(OFILES_BIN) $(OFILES_SRC)
 export HFILES_BIN	:=	$(addsuffix .h,$(subst .,_,$(BINFILES)))
 
@@ -280,7 +279,7 @@ $(LL_DIR)/app.ll: $(SWIFT_SRCS)
 
 #---------------------------------------------------------------------------------
 # posix_memalign shim rule
-$(OBJ_DIR)/posix_memalign_shim.o: ./../Support/posix_memalign_shim.c
+$(OBJ_DIR)/support_extra.o: ./../Support/application.c
 	@mkdir -p $(OBJ_DIR)
 	@$(CC) -c $< -o $@
 

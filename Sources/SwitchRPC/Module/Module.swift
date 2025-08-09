@@ -5,17 +5,20 @@ import libnx
 @main
 struct SwitchRPC {
 	static func main() {
-		svcSleepThread(60 * 1000 * 1000 * 1000) // Sleep for 60 seconds to allow the switch to boot and connect to the network
+		svcSleepThread(45 * 1000 * 1000 * 1000) // Sleep to allow the switch to boot and connect to the network
 		while true {
-			let req = curl_easy_init()
-			curl_easy_setopt_str(req, CURLOPT_URL, "http://192.168.0.156:3000/api/update")
-			curl_easy_setopt_long(req, CURLOPT_POST, 1)
-			curl_easy_setopt_str(req, CURLOPT_POSTFIELDS, "{\"tid\": 0, \"title\": \"gm\"}")
-			curl_easy_setopt_long(req, CURLOPT_TIMEOUT_MS, 1000)
-			
-			curl_easy_perform(req)
-
-			svcSleepThread(2 * 1000 * 1000 * 1000)
+			if let info = Utilities.GetCurrentProcessData() {
+				let payload = JSONValue.object([
+					"tid": .uint(info.tid),
+					"title": .string(info.title)
+				])
+				
+				let res = try? Request(url: "http://192.168.0.214:3000/api/update")
+					.addingHeader("Content-Type", value: "application/json")
+					.settingMethod(.post)
+					.settingData(payload.stringify() ?? "{}")
+					.perform()
+			}
 		}
 	}
 }

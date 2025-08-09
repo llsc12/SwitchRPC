@@ -17,6 +17,42 @@ public enum JSONValue {
 	public init(_ value: Bool) { self = .bool(value) }
 	public init(_ value: [String: JSONValue]) { self = .object(value) }
 	public init(_ value: [JSONValue]) { self = .array(value) }
+	
+	static func string(_ value: String?) -> JSONValue {
+		if let value {
+			return .string(value)
+		} else {
+			return .null
+		}
+	}
+	static func int(_ value: Int?) -> JSONValue {
+		if let value {
+			return .int(value)
+		} else {
+			return .null
+		}
+	}
+	static func uint(_ value: UInt?) -> JSONValue {
+		if let value {
+			return .int(Int(value))
+		} else {
+			return .null
+		}
+	}
+	static func double(_ value: Double?) -> JSONValue {
+		if let value {
+			return .double(value)
+		} else {
+			return .null
+		}
+	}
+	static func bool(_ value: Bool?) -> JSONValue {
+		if let value {
+			return .bool(value)
+		} else {
+			return .null
+		}
+	}
 }
 
 extension JSONValue {

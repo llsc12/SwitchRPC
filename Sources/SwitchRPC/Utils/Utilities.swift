@@ -49,29 +49,34 @@ extension Dictionary<String, String> {
 }
 
 enum Utilities {
-	static func GetCurrentProcessData() throws(UtilError) -> (pid: UInt, tid: UInt, title: String, username: String) {
+	static func GetCurrentProcessData() -> (pid: UInt, tid: UInt, title: String, username: String)? {
 		var pid: UInt64 = 0
 		var tid: UInt64 = 0
 
+		var rc: Result = 0
 		// Get process ID and title ID
-		pmdmntGetApplicationProcessId(&pid)
-		pminfoGetProgramId(&tid, pid)
+		rc = pmdmntGetApplicationProcessId(&pid)
+		guard rc.succeeded else { return nil }
+		rc = pminfoGetProgramId(&tid, pid)
+		guard rc.succeeded else { return nil }
 
 		// Load application control data
 		var appControlData = NsApplicationControlData()
 		var appControlDataSize: UInt64 = 0
 
-		nsGetApplicationControlData(
+		rc = nsGetApplicationControlData(
 			NsApplicationControlSource_Storage,
 			tid,
 			&appControlData,
 			MemoryLayout.size(ofValue: appControlData),
 			&appControlDataSize
 		)
+		guard rc.succeeded else { return nil }
 
 		// Get language entry pointer
 		var langEntryPtr: UnsafeMutablePointer<NacpLanguageEntry>? = nil
-		nacpGetLanguageEntry(&appControlData.nacp, &langEntryPtr)
+		rc = nacpGetLanguageEntry(&appControlData.nacp, &langEntryPtr)
+		guard rc.succeeded else { return nil }
 
 		var name = "<unknown>"
 
@@ -91,10 +96,8 @@ enum Utilities {
 		}
 		
 		guard pid != 0 && tid != 0 && !name.isEmpty else {
-			throw UtilError.noTitleProcess
+			return nil
 		}
-		
-		
 		
 		return (UInt(pid), UInt(tid), name, "Unknown User")
 	}

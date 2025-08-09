@@ -268,8 +268,8 @@ struct Menu {
 	}
 
 	mutating func process() {
-		let data = try? Utilities.GetCurrentProcessData()
-		log("app: \(data?.name ?? "No App Open")")
+		let data = Utilities.GetCurrentProcessData()
+		log("app: \(data?.title ?? "No App Open")")
 	}
 
 	mutating func log(_ message: String, rd: Bool = false) {

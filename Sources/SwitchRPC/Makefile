@@ -63,6 +63,7 @@ LIBS := -lnx `curl-config --libs` -ljson-c
 
 # Swift specific flags
 CFLAGS += -DNXSysmodule
+
 # SWIFTC := swiftc
 SWIFT_TOOLCHAIN := /Users/llsc12/Library/Developer/Toolchains/swift-6.2-DEVELOPMENT-SNAPSHOT-2025-07-09-a.xctoolchain
 SWIFTC := $(SWIFT_TOOLCHAIN)/usr/bin/swiftc
@@ -75,6 +76,7 @@ MODULEMAP := $(INCLUDE_DIR)/module.modulemap
 SHIM_HEADER := $(INCLUDE_DIR)/header.h
 
 SWIFT_CFLAGS := \
+	-DNXSysmodule -D__SWITCH__ \
   -I/opt/devkitpro/libnx/include \
   -I/opt/devkitpro/libnx/include/switch \
   -I/opt/devkitpro/devkitA64/aarch64-none-elf/include
@@ -139,7 +141,7 @@ endif
 #---------------------------------------------------------------------------------
 
 export OFILES_BIN	:=	$(addsuffix .o,$(BINFILES))
-export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o) $(OBJ_DIR)/app.o $(OBJ_DIR)/posix_memalign_shim.o
+export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o) $(OBJ_DIR)/app.o $(OBJ_DIR)/support_extra.o
 export OFILES 	  :=	$(OFILES_BIN) $(OFILES_SRC)
 export HFILES_BIN	:=	$(addsuffix .h,$(subst .,_,$(BINFILES)))
 
@@ -277,7 +279,7 @@ $(LL_DIR)/app.ll: $(SWIFT_SRCS)
 
 #---------------------------------------------------------------------------------
 # posix_memalign shim rule
-$(OBJ_DIR)/posix_memalign_shim.o: ./../Support/posix_memalign_shim.c
+$(OBJ_DIR)/support_extra.o: ./../Support/sysmodule.c
 	@mkdir -p $(OBJ_DIR)
 	@$(CC) -c $< -o $@
 

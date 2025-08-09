@@ -18,8 +18,6 @@ int posix_memalign(void **memptr, size_t alignment, size_t size) {
 // _getentropy_r stub
 int _getentropy_r(void *reent, void *buffer, size_t length) { return -1; }
 
-// if NXSysmodule defined, this is a sysmodule. it needs newlib heap configuration.
-#if defined(NXSysmodule) && defined(__SWITCH__)
 // Include the main libnx system header, for Switch development
 #include "/opt/devkitpro/libnx/include/switch.h"
 
@@ -42,4 +40,7 @@ void __libnx_initheap(void) {
 	fake_heap_start = inner_heap;
 	fake_heap_end   = inner_heap + sizeof(inner_heap);
 }
-#endif
+
+int meow(void) {
+	return 0;
+}
