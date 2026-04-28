@@ -2,6 +2,8 @@ import curl
 import json
 import libnx
 
+let sysmoduleTitleId: UInt64 = 0x3120000000000092
+
 @main
 struct App: NXApp {
 	nonisolated(unsafe) static let discord = Discord()
@@ -28,6 +30,7 @@ struct App: NXApp {
 		consoleInit(nil)
 		socketInitializeDefault()
 		Request.curlInit()
+		pmshellInitialize()
 		pmdmntInitialize()
 		pminfoInitialize()
 		nsInitialize()
@@ -47,6 +50,7 @@ struct App: NXApp {
 		nsExit()
 		pminfoExit()
 		pmdmntExit()
+		pmshellExit()
 		Request.curlCleanup()
 		socketExit()
 		consoleExit(nil)
@@ -57,9 +61,32 @@ struct Menu {
 	var wasInvalidated = true  // redraw flag
 
 	// Menu state variables
-	var isLoggedIn = false
-	var sysmoduleEnabled = false
+	var isLoggedIn = checkLogin()
+	// var sysmoduleEnabled = Utilities.isSysmoduleRunning(titleId: sysmoduleTitleId) {
+	// 	didSet {
+	// 		if sysmoduleEnabled {
+	// 			Utilities.startSysmodule(titleId: sysmoduleTitleId)
+	// 			log("Sysmodule enabled")
+	// 		} else {
+	// 			Utilities.stopSysmodule(titleId: sysmoduleTitleId)
+	// 			log("Sysmodule disabled")
+	// 		}
+	// 		Utilities.setSysmoduleAutoBoot(titleId: sysmoduleTitleId, enable: sysmoduleEnabled)
+	// 	}
+	// }
 	var selectedIndex = 0
+
+	static func checkLogin() -> Bool {
+		let path = "sdmc:/config/switchrpc_token"
+		if let file = fopen(path, "r") {
+			var tokenBuffer = [CChar](repeating: 0, count: 512)
+			fgets(&tokenBuffer, Int32(tokenBuffer.count), file)
+			fclose(file)
+			let token = String(cStr: tokenBuffer)
+			return !token.isEmpty
+		}
+		return false
+	}
 
 	var logs: [String] = [] {
 		didSet {
@@ -74,9 +101,9 @@ struct Menu {
 	var currentOptions: [String] {
 		[
 			isLoggedIn ? "Log out" : "Log in",
-			sysmoduleEnabled ? "Disable sysmodule" : "Enable sysmodule",
+			// sysmoduleEnabled ? "Disable sysmodule" : "Enable sysmodule",
 			"Exit app",
-			"[DEBUG] Get current process",
+			// "[DEBUG] Get current process",
 		]
 	}
 
@@ -103,10 +130,10 @@ struct Menu {
 			self.wasInvalidated = true
 			switch selectedIndex {
 			// log in/log out
-			case 0: self.logIn()
-			case 1: sysmoduleEnabled.toggle()
-			case 2: ctx.exit()
-			case 3: process()
+			case 0: self.isLoggedIn ? self.logOut() : self.logIn()
+			// case 1: sysmoduleEnabled.toggle()
+			case 1: ctx.exit()
+			// case 3: process()
 			default: break
 			}
 		}
@@ -199,7 +226,7 @@ struct Menu {
 				// save token to file for later use
 				if let token = App.discord.auth?.refreshToken {
 					// save using fs module
-					let path = "sdmc:/config/switchrpc/discord_token"
+					let path = "sdmc:/config/switchrpc_token"
 					if let file = fopen(path, "w") {
 						fputs(token, file)
 						fclose(file)
@@ -210,6 +237,14 @@ struct Menu {
 				log("Failed: \(error.errorDescription ?? "Unknown error")")
 			}
 		}
+	}
+
+	mutating func logOut() {
+		// delete token file
+		let path = "sdmc:/config/switchrpc_token"
+		remove(path)
+		isLoggedIn = false
+		log("Logged out", rd: true)
 	}
 
 	mutating func process() {

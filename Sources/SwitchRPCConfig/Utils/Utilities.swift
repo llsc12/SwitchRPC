@@ -107,6 +107,53 @@ enum Utilities {
 		}
 		return "Unknown Title"
 	}
+
+	// // Start a background sysmodule by its Title ID
+	// @discardableResult
+	// static func startSysmodule(titleId: UInt64) -> Result {
+	// 	var location = NcmProgramLocation()
+	// 	location.program_id = titleId
+	// 	location.storageID = UInt8(NcmStorageId_None.rawValue)
+		
+	// 	var newPid: UInt64 = 0
+	// 	return pmshellLaunchProgram(0, &location, &newPid)
+	// }
+
+	// // Stop a currently running sysmodule by its Title ID
+	// @discardableResult
+	// static func stopSysmodule(titleId: UInt64) -> Result {
+	// 	return pmshellTerminateProgram(titleId)
+	// }
+
+	// // Check if a sysmodule is currently running
+	// static func isSysmoduleRunning(titleId: UInt64) -> Bool {
+	// 	var pid: UInt64 = 0
+	// 	let rc = pmdmntGetProcessId(&pid, titleId)
+	// 	return rc.succeeded
+	// }
+
+	// static func setSysmoduleAutoBoot(titleId: UInt64, enable: Bool) {
+  //   let contentDir = "sdmc:/atmosphere/contents/\(titleId)"
+  //   let flagsDir = "\(contentDir)/flags"
+  //   let flagFile = "\(flagsDir)/boot2.flag"
+
+	// 	var sdmc = FsFileSystem()
+  //   let rc = fsOpenSdCardFileSystem(&sdmc)
+  //   guard rc == 0 else { return } // Bail out if SD card fails to open
+  //   defer { fsFsClose(&sdmc) }
+
+  //   if enable {
+  //       contentDir.withCString { fsFsCreateDirectory(&sdmc, $0); return }
+  //       flagsDir.withCString { fsFsCreateDirectory(&sdmc, $0); return }
+        
+	// 			fsFsCreateFile(&sdmc, flagFile, 0, 0)
+  //   } else {
+	// 		flagFile.withCString { path in
+	// 			fsFsDeleteFile(&sdmc, path)
+	// 			return
+	// 		}
+  //   }
+	// }
 }
 
 extension String {
