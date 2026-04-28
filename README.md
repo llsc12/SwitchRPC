@@ -5,9 +5,12 @@ Does not rely on anything other than your Switch and a mobile device for logging
 
 This is better than what's out there as of writing because it doesn't rely on an online computer on the local network to function. It all happens on the Switch itself.
 
+> [!TIP]
+> Like this project? Own a Mac for developing? You might like [XRPC, Xcode Rich Presence done right](https://github.com/llsc12/XRPC).
+
 ## Nerd details
 
-Relies on tinfoil.io for game artworks. Uses Discord Social SDK endpoints to push presence data.
+Relies on tinfoil.io for game artworks. Uses Discord Social SDK endpoints for auth and its scope allow pushing presence data.
 
 Written in Embedded Swift!
 
