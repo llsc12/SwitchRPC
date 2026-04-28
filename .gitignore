@@ -18,3 +18,5 @@ DerivedData/
 SwitchRPC.zip
 /.swiftpm
 Sources/SwitchRPCConfig/.gdbinit
+/Sources/SwitchRPC.bak/.build
+/Sources/SwitchRPC/build

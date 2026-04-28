@@ -38,8 +38,8 @@ include $(DEVKITPRO)/libnx/switch_rules
 #   NACP building is skipped as well.
 #---------------------------------------------------------------------------------
 TARGET		:=	$(notdir $(CURDIR))
-BUILD		:=	.build
-SOURCES		:=	.
+BUILD		:=	build
+SOURCES		:=	source
 DATA		:=	data
 INCLUDES	:=	include
 #ROMFS	:=	romfs
@@ -61,46 +61,12 @@ LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*
 
 LIBS := -lnx `curl-config --libs` -ljson-c
 
-# Swift specific flags
-CFLAGS += -DNXSysmodule
-
-# SWIFTC := swiftc
-SWIFT_TOOLCHAIN := /Users/llsc12/Library/Developer/Toolchains/swift-6.2-DEVELOPMENT-SNAPSHOT-2025-07-09-a.xctoolchain
-SWIFTC := $(SWIFT_TOOLCHAIN)/usr/bin/swiftc
-UNICODE_SUPPORT = $(SWIFT_TOOLCHAIN)/usr/lib/swift/embedded/aarch64-none-none-elf/libswiftUnicodeDataTables.a
-
-# Recursive Swift file discovery
-SWIFT_SRCS := $(shell find .. -name "*.swift" -type f)
-INCLUDE_DIR := ./../../Support
-MODULEMAP := $(INCLUDE_DIR)/module.modulemap
-SHIM_HEADER := $(INCLUDE_DIR)/header.h
-
-SWIFT_CFLAGS := \
-	-DNXSysmodule -D__SWITCH__ \
-  -I/opt/devkitpro/libnx/include \
-  -I/opt/devkitpro/libnx/include/switch \
-  -I/opt/devkitpro/devkitA64/aarch64-none-elf/include
-
-SWIFT_VERSION := 6
-BUILD_DIR := swift
-OBJ_DIR := $(BUILD_DIR)/obj
-LL_DIR := $(BUILD_DIR)/ll
-
-# end of swift specific flags
-
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
 # include and lib
 #---------------------------------------------------------------------------------
 LIBDIRS	:= $(PORTLIBS) $(LIBNX)
 
-#---------------------------------------------------------------------------------
-# Recursive file discovery functions
-#---------------------------------------------------------------------------------
-rwildcard=$(foreach d,$(wildcard $(1:=/*)),$(call rwildcard,$d,$2) $(filter $(subst *,%,$2),$d))
-
-# Function to get all subdirectories recursively
-get_all_dirs = $(sort $(dir $(call rwildcard,$(1),*)))
 
 #---------------------------------------------------------------------------------
 # no real need to edit anything past this point unless you need to add additional
@@ -112,19 +78,15 @@ ifneq ($(BUILD),$(notdir $(CURDIR)))
 export OUTPUT	:=	$(CURDIR)/$(TARGET)
 export TOPDIR	:=	$(CURDIR)
 
-# Get all directories recursively for VPATH
-ALL_SOURCE_DIRS := $(foreach dir,$(SOURCES),$(call get_all_dirs,$(CURDIR)/$(dir)))
-ALL_DATA_DIRS := $(foreach dir,$(DATA),$(call get_all_dirs,$(CURDIR)/$(dir)))
-
-export VPATH	:=	$(ALL_SOURCE_DIRS) $(ALL_DATA_DIRS)
+export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
+			$(foreach dir,$(DATA),$(CURDIR)/$(dir))
 
 export DEPSDIR	:=	$(CURDIR)/$(BUILD)
 
-# Recursive file discovery
-CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(call rwildcard,$(dir),*.c)))
-CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(call rwildcard,$(dir),*.cpp)))
-SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(call rwildcard,$(dir),*.s)))
-BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(call rwildcard,$(dir),*.*)))
+CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
+CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
+SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
+BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
 #---------------------------------------------------------------------------------
 # use CXX for linking C++ projects, CC for standard C
@@ -141,13 +103,11 @@ endif
 #---------------------------------------------------------------------------------
 
 export OFILES_BIN	:=	$(addsuffix .o,$(BINFILES))
-export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o) $(OBJ_DIR)/app.o $(OBJ_DIR)/support_extra.o
-export OFILES 	  :=	$(OFILES_BIN) $(OFILES_SRC)
+export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
+export OFILES 	:=	$(OFILES_BIN) $(OFILES_SRC)
 export HFILES_BIN	:=	$(addsuffix .h,$(subst .,_,$(BINFILES)))
 
-# Recursive include directory discovery
-ALL_INCLUDE_DIRS := $(foreach dir,$(INCLUDES),$(call get_all_dirs,$(CURDIR)/$(dir)))
-export INCLUDE	:=	$(foreach dir,$(ALL_INCLUDE_DIRS),-I$(dir)) \
+export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
 			$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
 			-I$(CURDIR)/$(BUILD)
 
@@ -213,6 +173,7 @@ else
 	@rm -fr $(BUILD) $(TARGET).nsp $(TARGET).nso $(TARGET).npdm $(TARGET).elf
 endif
 
+
 #---------------------------------------------------------------------------------
 else
 .PHONY:	all
@@ -242,8 +203,7 @@ $(OUTPUT).nso	:	$(OUTPUT).elf
 
 endif
 
-$(OUTPUT).elf : $(OFILES)
-	@$(LD) $(LDFLAGS) -o $@ $(OFILES) $(LIBPATHS) $(LIBS) -Wl,--whole-archive $(UNICODE_SUPPORT) -Wl,--no-whole-archive
+$(OUTPUT).elf	:	$(OFILES)
 
 $(OFILES_SRC)	: $(HFILES_BIN)
 
@@ -256,32 +216,6 @@ $(OFILES_SRC)	: $(HFILES_BIN)
 	@$(bin2o)
 
 -include $(DEPENDS)
-
-# swift compilation
-
-$(OBJ_DIR)/app.o: $(LL_DIR)/app.ll
-	@mkdir -p $(OBJ_DIR)
-	@clang -target aarch64 -fpic -ffreestanding \
-		-c $(LL_DIR)/app.ll -o $(OBJ_DIR)/app.o
-
-$(LL_DIR)/app.ll: $(SWIFT_SRCS)
-	@mkdir -p $(LL_DIR)
-	@$(SWIFTC) -swift-version $(SWIFT_VERSION) \
-		-target aarch64-none-none-elf \
-		-enable-experimental-feature Embedded \
-		-parse-as-library \
-		-Xcc -fmodule-map-file=$(MODULEMAP) \
-		$(foreach flag,$(SWIFT_CFLAGS),-Xcc $(flag)) \
-		$(SWIFT_SRCS) \
-		-wmo \
-		-emit-ir \
-		-o $(LL_DIR)/app.ll
-
-#---------------------------------------------------------------------------------
-# posix_memalign shim rule
-$(OBJ_DIR)/support_extra.o: ./../Support/sysmodule.c
-	@mkdir -p $(OBJ_DIR)
-	@$(CC) -c $< -o $@
 
 #---------------------------------------------------------------------------------------
 endif

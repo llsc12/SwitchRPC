@@ -1,5 +1,5 @@
 {
 	"name"  : "SwitchRPC",
 	"tid"   : "3120000000000092",
-	"requires_reboot": true
+	"requires_reboot": false
 }

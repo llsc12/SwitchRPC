@@ -19,7 +19,7 @@ extension UInt8 {
 	}
 }
 
-@_silgen_name("__errno") // This is the C symbol
+@_silgen_name("__errno")  // This is the C symbol
 func __errno() -> UnsafeMutablePointer<Int32>
 
 extension String {
@@ -42,71 +42,71 @@ extension String {
 	}
 }
 
-extension Dictionary<String, String> {
+extension [String: String] {
 	func toQueryString() -> String {
 		return map { "\($0)=\(Request.URLEncode($1))" }.joined(separator: "&")
 	}
 }
 
 enum Utilities {
-	static func GetCurrentProcessData() -> (pid: UInt, tid: UInt, title: String, username: String)? {
-		var pid: UInt64 = 0
-		var tid: UInt64 = 0
+	static func GetCurrentProcessData() -> (
+		pid: UInt64, tid: UInt64, title: String
+	)? {
+		var processId: UInt64 = 0
+		var programId: UInt64 = 0
 
-		// Get process ID and title ID
-		pmdmntGetApplicationProcessId(&pid)
-		pminfoGetProgramId(&tid, pid)
+		// Try to get the application process ID
+		if pmdmntGetApplicationProcessId(&processId).succeeded {
+			// Try to get the program ID for this process
+			if pminfoGetProgramId(&programId, processId).succeeded {
+				// Try to get the application name using programId
+				let title = getAppName(programId: programId)
+				return (processId, programId, title)
+			} else {
+				// If programId could not be obtained, its useless anyways. return nil
+				return nil
+			}
+		} else {
+			return nil
+		}
+	}
 
-		// Load application control data
+	static func getAppName(programId: UInt64) -> String {
+		// Allocate control data buffer
 		var appControlData = NsApplicationControlData()
 		var appControlDataSize: UInt64 = 0
 
-		nsGetApplicationControlData(
+		// Zero out the buffer (mimic memset)
+		_ = withUnsafeMutableBytes(of: &appControlData) {
+			$0.initializeMemory(as: UInt8.self, repeating: 0)
+		}
+
+		// Fetch application control data
+		if nsGetApplicationControlData(
 			NsApplicationControlSource_Storage,
-			tid,
+			programId,
 			&appControlData,
 			MemoryLayout.size(ofValue: appControlData),
 			&appControlDataSize
-		)
-
-		// Get language entry pointer
-		var langEntryPtr: UnsafeMutablePointer<NacpLanguageEntry>? = nil
-		nacpGetLanguageEntry(&appControlData.nacp, &langEntryPtr)
-
-		var name = "<unknown>"
-
-		if let langEntry = langEntryPtr {
-			// Copy name field into a buffer
-			let rawName = langEntry.pointee.name
-			let nameBytes = withUnsafeBytes(of: rawName) { rawPtr -> [UInt8] in
-				var bytes = Array(rawPtr.prefix(512))
-				if bytes.last != 0 {
-					bytes.append(0) // ensure null-termination
+		).succeeded {
+			// Get language entry pointer
+			var langEntryPtr: UnsafeMutablePointer<NacpLanguageEntry>? = nil
+			if nacpGetLanguageEntry(&appControlData.nacp, &langEntryPtr).succeeded {
+				if let langEntry = langEntryPtr {
+					// Safely convert the name field to a Swift String
+					let name = withUnsafeBytes(of: langEntry.pointee.name) {
+						rawPtr -> String in
+						let buffer = rawPtr.bindMemory(to: CChar.self)
+						return String(cString: buffer.baseAddress!)
+					}
+					if !name.isEmpty {
+						return name
+					}
 				}
-				return bytes
 			}
-
-			// Convert using C-string constructor
-			name = String(cStr: nameBytes)
 		}
-		
-		guard pid != 0 && tid != 0 && !name.isEmpty else {
-			return nil
-		}
-		
-		return (UInt(pid), UInt(tid), name, "Unknown User")
+		return "Unknown Title"
 	}
-		
-		enum UtilError: LocalizedError {
-			case noTitleProcess
-			
-			var errorDescription: String? {
-				switch self {
-				case .noTitleProcess:
-					return "No title process is running."
-				}
-			}
-		}
 }
 
 extension String {
@@ -164,9 +164,8 @@ extension Result {
 	}
 }
 
-
 /// Builds a HOS version value from its constituent components.
 // #define MAKEHOSVERSION(_major,_minor,_micro) (((u32)(_major) << 16) | ((u32)(_minor) << 8) | (u32)(_micro))
 func MAKEHOSVERSION(_ major: UInt8, _ minor: UInt8, _ micro: UInt8) -> UInt32 {
-		return (UInt32(major) << 16) | (UInt32(minor) << 8) | UInt32(micro)
+	return (UInt32(major) << 16) | (UInt32(minor) << 8) | UInt32(micro)
 }

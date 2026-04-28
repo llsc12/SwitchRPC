@@ -18,7 +18,7 @@ class Discord {
 	var auth: AuthResponse?
 	
 	func me() throws(DiscordError) -> JSONValue {
-		let auth = try checAuth()
+		let auth = try checkAuth()
 		
 		var res: Response
 		do {
@@ -103,7 +103,7 @@ class Discord {
 		}
 	}
 	
-	func checAuth() throws(DiscordError) -> AuthResponse {
+	func checkAuth() throws(DiscordError) -> AuthResponse {
 		guard let auth = self.auth else {
 			throw DiscordError.unauthenticated
 		}

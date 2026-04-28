@@ -121,6 +121,8 @@ struct Request {
 			slist = curl_slist_append(slist, header)
 		}
 		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, slist)
+		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0)
+
 
 		// Method
 		switch method {

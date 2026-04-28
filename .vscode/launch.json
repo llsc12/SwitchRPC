@@ -23,6 +23,26 @@
       "name": "Release SwitchRPCConfig",
       "program": "${workspaceFolder:SwitchRPC}/.build/release/SwitchRPCConfig",
       "preLaunchTask": "swift: Build Release SwitchRPCConfig"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:SwitchRPC}",
+      "name": "Debug SwitchRPC",
+      "target": "SwitchRPC",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug SwitchRPC"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:SwitchRPC}",
+      "name": "Release SwitchRPC",
+      "target": "SwitchRPC",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release SwitchRPC"
     }
   ]
 }

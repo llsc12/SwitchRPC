@@ -11,7 +11,7 @@ IN_SYSMODULE_DIR	:=	Sources/SwitchRPC
 IN_CONFIGAPP_DIR	:=	Sources/SwitchRPCConfig
 IN_CONFIGAPP_FILE	:=	Sources/SwitchRPCConfig/SwitchRPCConfig.nro
 
-OUT_DIR 		:= 	SwitchRPC
+OUT_DIR 			:= 	SwitchRPC
 OUT_SYSMODULE_DIR	:=	build/SwitchRPC
 OUT_CONFIGAPP_DIR	:=  build/SwitchRPCApp
 

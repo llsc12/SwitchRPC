@@ -2,86 +2,13 @@ import curl
 import json
 import libnx
 
-//struct SwitchRPCConfig {
-//	static func main() {
-//
-//		consoleInit(nil)
-//		defer { consoleExit(nil) }
-//
-//		// networking
-//		socketInitializeDefault()
-//		defer { socketExit() }
-//
-//		//		nxlinkStdio()
-//
-//		// init curl
-//		Request.curlInit()
-//		defer { Request.curlCleanup() }
-//
-//		// config game pad
-//		padConfigureInput(1, HidNpadStyleSet_NpadStandard.rawValue)
-//
-//		var pad: PadState = .init()
-//		padInitializeDefault(&pad)
-//
-//		pmdmntInitialize()
-//		defer { pmdmntExit() }
-//		pminfoInitialize()
-//		defer { pminfoExit() }
-//		nsInitialize()
-//		defer { nsExit() }
-//
-//		print(
-//			"""
-//			SwitchRPC
-//
-//				Press (A) to log into Discord
-//
-//				Press (+) to exit
-//
-//			By llsc12
-//			"""
-//		)
-//
-//		// push console frame
-//		consoleUpdate(nil)
-//
-//		let server = WebServer.shared
-//
-//		let discord = Discord()
-//
-//		var codeChallenge = ""
-//		var state = ""
-//		var codeVerifier = ""
-//
-//		while appletMainLoop() {
-//			padUpdate(&pad)
-//
-//			if padGetButtonsDown(&pad) & UInt64(HidNpadButton_Plus.rawValue) != 0 {
-//				break
-//			}
-//
-//			if padGetButtonsDown(&pad) & UInt64(HidNpadButton_A.rawValue) != 0 {
-//
-//			}
-//
-//			if padGetButtonsDown(&pad) & UInt64(HidNpadButton_B.rawValue) != 0 {
-//				let data = try? Utilities.GetCurrentProcessData()
-//				print("app: \(data?.name ?? "No App Open")")
-//			}
-//
-//			consoleUpdate(nil)  // push new frame
-//		}
-//	}
-//}
-
 @main
 struct App: NXApp {
 	nonisolated(unsafe) static let discord = Discord()
 	nonisolated(unsafe) static let server: WebServer = .shared
 	nonisolated(unsafe) static var webConfig: WebCommonConfig = .init()
 
-	var menu = Menu()
+	var menu: Menu = Menu()
 
 	mutating func runloop(_ ctx: inout RunLoopContext) {  // runs in a loop, calling ctx.exit() ends the app
 		ctx.pad.update()
@@ -107,12 +34,13 @@ struct App: NXApp {
 		smInitialize()
 		accountInitialize(AccountServiceType_Application)
 		setsysInitialize()
+		fsdevMountSdmc()
 
 		ctx.pad.configure(1, .standard)
-
-		// set up menu states
 	}
 	func modulesExit(_ ctx: inout RunLoopContext) {
+		fsdevUnmountAll()
+		fsExit()
 		setsysExit()
 		accountExit()
 		smExit()
@@ -153,6 +81,12 @@ struct Menu {
 	}
 
 	mutating func tick(_ ctx: inout RunLoopContext) {
+		// Handle exit request
+		if ctx.pad.wasButtonPressed(.plus) {
+			ctx.exit()
+			return
+		}
+		
 		// Move selection
 		if ctx.pad.wasButtonPressed(.anyDown) {
 			self.wasInvalidated = true
@@ -261,6 +195,17 @@ struct Menu {
 				let me = try App.discord.me()
 				let username = me["user"]["username"].string ?? "Unknown User"
 				log("Hello, \(username)!")
+
+				// save token to file for later use
+				if let token = App.discord.auth?.refreshToken {
+					// save using fs module
+					let path = "sdmc:/config/switchrpc/discord_token"
+					if let file = fopen(path, "w") {
+						fputs(token, file)
+						fclose(file)
+					}
+					isLoggedIn = true
+				}
 			} catch {
 				log("Failed: \(error.errorDescription ?? "Unknown error")")
 			}
