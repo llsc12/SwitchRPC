@@ -117,7 +117,7 @@ void sendRequest(const char* url, const char* method, struct curl_slist* headers
 
         // curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
         // curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, curlDebugCallback);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, [](char* ptr, size_t size, size_t nmemb, void* userdata) -> size_t {
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](char* ptr, size_t size, size_t nmemb, void* userdata) -> size_t {
             size_t total_size = size * nmemb;
             if (userdata != NULL) {
                 std::string* resp = static_cast<std::string*>(userdata);
@@ -230,7 +230,7 @@ void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool
     json_object_object_add(json_activity, "type", json_object_new_string("0"));
     json_object_object_add(json_activity, "flags", json_object_new_string("0"));  
     json_object_object_add(json_activity, "application_id", json_object_new_string(clientId));
-    json_object_object_add(json_activity, "platform", json_object_new_string("switch"));
+    json_object_object_add(json_activity, "platform", json_object_new_string("desktop"));
     json_object_object_add(json_activity, "name", json_object_new_string(titleName.c_str()));
     json_object_object_add(json_activity, "state", json_object_new_string("Running on Nintendo Switch"));
     
@@ -248,8 +248,11 @@ void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool
     
     const char* body = json_object_get_string(json_body);
 
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json; charset=utf-8");
+
     std::string response;
-    authenticatedRequest("https://discord.com/api/v9/users/@me/headless-sessions", "POST", NULL, body, &response);
+    authenticatedRequest("https://discord.com/api/v9/users/@me/headless-sessions", "POST", headers, body, &response);
 
     json_object_put(json_body);
 
@@ -283,7 +286,10 @@ void discordDeleteHeadlessSession() {
     json_object_object_add(json_body, "token", json_object_new_string(sessionToken.c_str()));
     const char* body = json_object_get_string(json_body);
 
-    authenticatedRequest("https://discord.com/api/v9/users/@me/headless-sessions/delete", "POST", NULL, body, NULL);
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json; charset=utf-8");
+
+    authenticatedRequest("https://discord.com/api/v9/users/@me/headless-sessions/delete", "POST", headers, body, NULL);
 
     json_object_put(json_body);
     
