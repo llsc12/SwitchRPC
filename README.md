@@ -8,6 +8,9 @@ The rich presence is handled on the Switch itself, without the need for external
 > [!TIP]
 > Like this project? Own a Mac for developing? You might like [XRPC, Xcode Rich Presence done right](https://github.com/llsc12/XRPC).
 
+## Installing
+Head over to [the releases](https://github.com/llsc12/SwitchRPC/releases/latest) and follow the instructions to download the latest version.
+
 ## Nerd details
 
 Relies on tinfoil.io for game artworks. Uses Discord Social SDK endpoints for auth and its scope allow pushing presence data.
