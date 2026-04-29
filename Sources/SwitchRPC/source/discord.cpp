@@ -106,8 +106,17 @@ void sendRequest(const char* url, const char* method, struct curl_slist* headers
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
-        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-        curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, curlDebugCallback);
+        // temporary fix to failing dns resolution
+        struct curl_slist *dns_cache = NULL;
+        dns_cache = curl_slist_append(dns_cache, "discord.com:443:162.159.138.232");
+        dns_cache = curl_slist_append(dns_cache, "discord.com:443:162.159.135.232");
+        
+        dns_cache = curl_slist_append(dns_cache, "gaming-sdk.com:443:104.18.41.99");
+        dns_cache = curl_slist_append(dns_cache, "gaming-sdk.com:443:172.64.146.157");
+        curl_easy_setopt(curl, CURLOPT_RESOLVE, dns_cache);
+
+        // curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+        // curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, curlDebugCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, [](char* ptr, size_t size, size_t nmemb, void* userdata) -> size_t {
             size_t total_size = size * nmemb;
             if (userdata != NULL) {
