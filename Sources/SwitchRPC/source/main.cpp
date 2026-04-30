@@ -78,9 +78,11 @@ extern "C" {
 
 // Sysmodules should not use applet*.
 u32 __nx_applet_type = AppletType_None;
+SslServiceType __nx_ssl_service_type = SslServiceType_System;
 
 // Sysmodules will normally only want to use one FS session.
 u32 __nx_fs_num_sessions = 1;
+
 
 // Newlib heap configuration function (makes malloc/free work).
 void __libnx_initheap(void)
@@ -110,7 +112,7 @@ void __appInit(void)
         SetSysFirmwareVersion fw;
         rc = setsysGetFirmwareVersion(&fw);
         if (R_SUCCEEDED(rc))
-            hosversionSet(MAKEHOSVERSION(fw.major, fw.minor, fw.micro));
+            hosversionSet(MAKEHOSVERSION(fw.major, fw.minor, fw.micro)); 
         setsysExit();
     }
 
@@ -135,12 +137,12 @@ void __appInit(void)
 
         .sb_efficiency = 4,
 
-        .num_bsd_sessions = 1,
-        .bsd_service_type = BsdServiceType_Auto,
+        .num_bsd_sessions = 3,
+        .bsd_service_type = BsdServiceType_System,
     };
     rc = socketInitialize(&sockConf);
     if (R_FAILED(rc))
-        writeToLog("[SwitchRPC] Warning: socketInitialize failed with code 0x%08X. Network features will not work.", rc);
+        writeToLog("[SwitchRPC] Warning: socketInitialize failed with code 0x%08X. This might be due to memory constraints. Network features will not work. Maybe disable other sysmodules?", rc);
     curl_global_init(CURL_GLOBAL_DEFAULT);
 	
 	pmdmntInitialize();

@@ -88,7 +88,7 @@ int curlDebugCallback(CURL *handle, curl_infotype type, char *data, size_t size,
 
 // curl helper for easy requests to discord,
 // specify url, method, headers, and body as needed and a pointer to a string to store the response in, and the size of that string.
-void sendRequest(const char* url, const char* method, struct curl_slist* headers, const char* body, std::string* response) {
+bool sendRequest(const char* url, const char* method, struct curl_slist* headers, const char* body, std::string* response) {
     writeToLog("[Discord] Sending %s request to %s", method, url);
     if (body != NULL) {
         writeToLog("[Discord] Request Body: %s", body);
@@ -115,8 +115,8 @@ void sendRequest(const char* url, const char* method, struct curl_slist* headers
         dns_cache = curl_slist_append(dns_cache, "gaming-sdk.com:443:172.64.146.157");
         curl_easy_setopt(curl, CURLOPT_RESOLVE, dns_cache);
 
-        // curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-        // curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, curlDebugCallback);
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+        curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, curlDebugCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](char* ptr, size_t size, size_t nmemb, void* userdata) -> size_t {
             size_t total_size = size * nmemb;
             if (userdata != NULL) {
@@ -139,25 +139,32 @@ void sendRequest(const char* url, const char* method, struct curl_slist* headers
                 writeToLog("[Discord] cURL request successful. (No response expected)");
             }
         }
+
+        long http_code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+        bool success = (http_code >= 200 && http_code < 300);
         
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
+
+        return success;
     } else {
         writeToLog("[Discord] Failed to initialize cURL!");
     }
 }
 
-void refreshAuthTokenIfNeeded() {
+bool refreshAuthTokenIfNeeded() {
     // check that we have a refresh token, if not, we can't do anything
     getRefreshTokenFromFile();
     if (refreshToken.empty()) { 
         writeToLog("[Discord] Cannot refresh: Refresh token is empty");
-        return; 
+        return false; 
     }
 
     // check if the auth token is expired or will expire in the next 5 minutes
     if (time(NULL) < authTokenExpiry - 300) { 
-        return; 
+        writeToLog("[Discord] Auth token is still valid.");
+        return true;
     }
 
     writeToLog("[Discord] Auth token expired or expiring soon. Refreshing...");
@@ -170,13 +177,18 @@ void refreshAuthTokenIfNeeded() {
     snprintf(body, 256, "grant_type=refresh_token&refresh_token=%s&client_id=%s", refreshToken.c_str(), clientId);
     
     std::string response = "";
-    sendRequest(url, method, headers, body, &response);   
+    bool success = sendRequest(url, method, headers, body, &response);   
     free(body);
+
+    if (!success) {
+        writeToLog("[Discord] Failed to send request for auth token refresh!");
+        return false;
+    }
 
     json_object* json_response = json_tokener_parse(response.c_str());
     if (json_response == NULL) { 
         writeToLog("[Discord] Failed to parse JSON response from token refresh!");
-        return; 
+        return false; 
     }
     
     json_object* json_auth_token;
@@ -199,18 +211,20 @@ void refreshAuthTokenIfNeeded() {
 
     // save the new refresh token to the sd card
     saveRefreshTokenToFile();
+    return true;
 }
 
-void authenticatedRequest(const char* url, const char* method, struct curl_slist* headers, const char* body, std::string* response) {
+bool authenticatedRequest(const char* url, const char* method, struct curl_slist* headers, const char* body, std::string* response) {
     refreshAuthTokenIfNeeded();
     
     if (authToken.empty()) {
-        writeToLog("[Discord] WARNING: Attempting authenticated request but authToken is empty!");
+        writeToLog("[Discord] WARNING: Attempted authenticated request but authToken is empty!");
+        return false;
     }
 
     std::string authHeader = "Authorization: Bearer " + authToken;
     struct curl_slist* authHeaders = curl_slist_append(headers, authHeader.c_str());
-    sendRequest(url, method, authHeaders, body, response);
+    return sendRequest(url, method, authHeaders, body, response);
 }
 
 void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool includeToken) {
@@ -252,7 +266,17 @@ void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool
     headers = curl_slist_append(headers, "Content-Type: application/json; charset=utf-8");
 
     std::string response;
-    authenticatedRequest("https://discord.com/api/v9/users/@me/headless-sessions", "POST", headers, body, &response);
+    bool success = authenticatedRequest("https://discord.com/api/v9/users/@me/headless-sessions", "POST", headers, body, &response);
+    if (!success) {
+        writeToLog("[Discord] Failed to create/update headless session!");
+        json_object_put(json_body);
+
+        // if the attempt happened with an existing session token, try again without it in case the token was the issue
+        if (includeToken) {
+            writeToLog("[Discord] Retrying headless session creation without session token...");
+            return discordCreateHeadlessSession(titleId, titleName, false);
+        }
+    }
 
     json_object_put(json_body);
 
@@ -268,7 +292,7 @@ void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool
         sessionTokenExpiry = time(NULL) + 900; // 15 mins to be safe.
         writeToLog("[Discord] Successfully extracted session token.");
     } else {
-        writeToLog("[Discord] Headless session response did NOT contain a session token.");
+        writeToLog("[Discord] Headless session response did NOT contain a session token. That shouldn't happen if the session was created successfully and discord returned 200.");
     }
 
     json_object_put(json_response);
