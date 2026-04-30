@@ -150,6 +150,7 @@ bool sendRequest(const char* url, const char* method, struct curl_slist* headers
         return success;
     } else {
         writeToLog("[Discord] Failed to initialize cURL!");
+        return false;
     }
 }
 
