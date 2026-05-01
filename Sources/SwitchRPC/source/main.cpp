@@ -248,10 +248,11 @@ int main(int argc, char* argv[])
         time_t sleep_end = time(NULL);
 
         if (sleep_end - sleep_start > 15) {
-            writeToLog("[SwitchRPC] Wake from sleep detected! Sleep thread took %lld seconds.", (long long)(sleep_end - sleep_start));
-            
+            writeToLog("[SwitchRPC] Wake from sleep detected! Sleep took %lld seconds. Waiting for network...", (long long)(sleep_end - sleep_start));
+            waitForNetworkReady();
+            writeToLog("[SwitchRPC] Network ready after sleep, clearing sessions.");
+
             last_update_time = 0; 
-            discordDeleteHeadlessSession(); // delete current session. 
             discordCleanupStaleSessions(); // cleanup any sessions we created prior.
         }
     }

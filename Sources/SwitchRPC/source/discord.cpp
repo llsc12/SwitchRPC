@@ -3,8 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <string>
 #include <time.h>
+#include <string>
+#include <set>
+#include <fstream>
 
 #include <switch.h>
 #include <json-c/json.h>
@@ -20,21 +22,21 @@ std::string refreshToken = "";
 std::string authToken = "";
 // token for the rich presence session to refresh it every 15 minutes or delete it when the app is closed
 std::string sessionToken = "";
-u64 sessionTokenExpiry = 0; // we derive this ourselves by getting the time of the request we did to make the session + 20 minutes.
+time_t sessionTokenExpiry = 0; // we derive this ourselves by getting the time of the request we did to make the session + 20 minutes.
 // the time when the auth token will expire, so we can refresh it before it does
 time_t authTokenExpiry = 0;
 
 
 void getRefreshTokenFromFile() {
-    FILE* file = fopen("sdmc:/config/switchrpc_token", "r");
-    if (file == NULL) { 
+    std::ifstream file("sdmc:/config/switchrpc_token");
+    if (!file.is_open()) {
         writeToLog("[Discord] No refresh token found at sdmc:/config/switchrpc_token");
         return; 
     }
     
-    char buf[513] = {0};
-    if (fgets(buf, sizeof(buf), file) != NULL) {
-        refreshToken = buf;
+    std::string line;
+    if (std::getline(file, line)) {
+        refreshToken = line;
         if (!refreshToken.empty() && refreshToken.back() == '\n') {
             refreshToken.pop_back();
         }
@@ -45,29 +47,29 @@ void getRefreshTokenFromFile() {
     } else {
         writeToLog("[Discord] Failed to read from sdmc:/config/switchrpc_token");
     }
-    fclose(file);
+    file.close();
 }
 
 void saveRefreshTokenToFile() {
     // save the refresh token to a file on the sd card
-    FILE* file = fopen("sdmc:/config/switchrpc_token", "w");
-    if (file == NULL) { 
+    std::ofstream file("sdmc:/config/switchrpc_token", std::ios::trunc);
+    if (!file.is_open()) { 
         writeToLog("[Discord] Failed to open sdmc:/config/switchrpc_token for writing!");
         return; 
     }
-    fprintf(file, "%s", refreshToken.c_str());
-    fclose(file);
+    file << refreshToken;
+    file.close();
     writeToLog("[Discord] Successfully saved new refresh token to file");
 }
 
 void saveSessionTokenToFile(const std::string& token) {
-    FILE* file = fopen("sdmc:/config/switchrpc_sessions", "a");
-    if (file == NULL) {
+    std::ofstream file("sdmc:/config/switchrpc_sessions", std::ios::app);
+    if (!file.is_open()) {
         writeToLog("[Discord] Failed to open sdmc:/config/switchrpc_sessions for appending!");
         return;
     }
-    fprintf(file, "%s\n", token.c_str());
-    fclose(file);
+    file << token << std::endl;
+    file.close();
     writeToLog("[Discord] Appended new session token to file");
 }
 
@@ -215,9 +217,9 @@ bool refreshAuthTokenIfNeeded() {
     const char* method = "POST";
     struct curl_slist* headers = NULL;
     headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded; charset=utf-8");
-    char* body = (char*)malloc(256);
-    snprintf(body, 256, "grant_type=refresh_token&refresh_token=%s&client_id=%s", refreshToken.c_str(), clientId);
-    
+    std::string bodyStr = "grant_type=refresh_token&refresh_token=" + refreshToken + "&client_id=" + clientId;
+    char* body = strdup(bodyStr.c_str());
+        
     std::string response = "";
     bool success = sendRequest(url, method, headers, body, &response);   
     free(body);
@@ -270,21 +272,34 @@ bool authenticatedRequest(const char* url, const char* method, struct curl_slist
 }
 
 void discordCleanupStaleSessions() {
-    FILE* file = fopen("sdmc:/config/switchrpc_sessions", "r");
-    if (file == NULL) {
+    std::ifstream file("sdmc:/config/switchrpc_sessions");
+    if (!file.is_open()) {
         writeToLog("[Discord] No stale sessions file found. Skipping cleanup.");
         return;
     }
 
     writeToLog("[Discord] Found switchrpc_sessions file, cleaning up stale sessions...");
     
-    char buf[513] = {0};
-    while (fgets(buf, sizeof(buf), file) != NULL) {
-        std::string token = buf;
-        if (!token.empty() && token.back() == '\n') token.pop_back();
-        if (!token.empty() && token.back() == '\r') token.pop_back();
-        if (token.empty()) continue;
+    std::set<std::string> uniqueTokens;
+    std::string line;
+    
+    while (std::getline(file, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (!line.empty()) {
+            uniqueTokens.insert(line);
+        }
+    }
+    file.close();
 
+    if (!sessionToken.empty() && uniqueTokens.count(sessionToken) > 0) {
+        if (time(NULL) < sessionTokenExpiry) {
+            uniqueTokens.erase(sessionToken);
+        }
+    }
+    
+    for (const std::string& token : uniqueTokens) {
         json_object* json_body = json_object_new_object();
         json_object_object_add(json_body, "token", json_object_new_string(token.c_str()));
         const char* body = json_object_get_string(json_body);
@@ -297,8 +312,6 @@ void discordCleanupStaleSessions() {
 
         json_object_put(json_body);
     }
-    
-    fclose(file);
     
     if (remove("sdmc:/config/switchrpc_sessions") == 0) {
         writeToLog("[Discord] Successfully removed sessions file.");
@@ -368,9 +381,14 @@ void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool
     
     json_object* json_session_token;
     if (json_object_object_get_ex(json_response, "token", &json_session_token)) {
-        sessionToken = json_object_get_string(json_session_token);
+        std::string newToken = json_object_get_string(json_session_token);
+        if (newToken != sessionToken) {
+            sessionToken = newToken;
+            saveSessionTokenToFile(sessionToken);
+        }
+
+        sessionToken = newToken;
         sessionTokenExpiry = time(NULL) + 900; // 15 mins to be safe.
-        saveSessionTokenToFile(sessionToken);
         
         writeToLog("[Discord] Successfully extracted session token.");
     } else {
