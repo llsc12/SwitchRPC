@@ -15,6 +15,7 @@ class WebServer {
 	nonisolated(unsafe) static let shared = WebServer(port: 45601)
 
 	// these will be a value by the time the server is stopped
+	public var codeChallenge: String?
 	public var code: String?
 	public var state: String?
 
@@ -208,8 +209,6 @@ class WebServer {
 		let requestString = String(cStr: buffer)
 		guard let requestLine = requestString.split(separator: "\r\n").first
 		else { return }
-
-		guard requestLine.hasPrefix("GET /callback") else { return }
 		
 		let comps = requestLine.split(
 			separator: " ",
@@ -260,6 +259,20 @@ class WebServer {
 				Self.shared.stop()
 				return
 			}
+		}
+
+		if path == "/" {
+			let deviceIP = Self.shared.getIPAddress()
+			let authURL =
+			"https://discord.com/oauth2/authorize?client_id=\(DiscordConsts.ClientID)&response_type=code&scope=\(Request.URLEncode(DiscordConsts.scope))&code_challenge=\(Self.shared.codeChallenge ?? "")&code_challenge_method=\("S256")&state=\(Self.shared.state ?? "")&redirect_uri=\(Request.URLEncode(DiscordConsts.redirectURI))"
+			let url =
+				"https://static.llsc12.me/discord?ip=\(deviceIP)&auth=\(Request.URLEncode(authURL))"
+			let response =
+				"HTTP/1.1 302 Found\r\nContent-Type: text/plain\r\nLocation: \(url)\r\n\r\nRedirecting to Discord for authentication..."
+			_ = response.withCString { cstr in
+				send(out, cstr, strlen(cstr), 0)
+			}
+			return
 		}
 
 		// no match, 404

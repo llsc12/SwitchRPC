@@ -168,43 +168,41 @@ struct Menu {
 
 		let deviceIP = App.server.getIPAddress()
 
-		// urls
-		let authURL =
-			"https://discord.com/oauth2/authorize?client_id=\(DiscordConsts.ClientID)&response_type=code&scope=\(Request.URLEncode(DiscordConsts.scope))&code_challenge=\(codeChallenge)&code_challenge_method=\("S256")&state=\(state)&redirect_uri=\(Request.URLEncode(DiscordConsts.redirectURI))"
+		App.server.codeChallenge = codeChallenge
+		App.server.state = state
 
-		let url =
-			"https://static.llsc12.me/discord?ip=\(deviceIP)&auth=\(Request.URLEncode(authURL))"
+		// // urls
+		// let authURL =
+		// 	"https://discord.com/oauth2/authorize?client_id=\(DiscordConsts.ClientID)&response_type=code&scope=\(Request.URLEncode(DiscordConsts.scope))&code_challenge=\(codeChallenge)&code_challenge_method=\("S256")&state=\(state)&redirect_uri=\(Request.URLEncode(DiscordConsts.redirectURI))"
 
-		// Create web page with QR code for user
-		App.webConfig = .init()
-		var reply = WebCommonReply()
-		_ = webPageCreate(
-			&App.webConfig,
-			"https://static.llsc12.me/discord/qr?url=\(Request.URLEncode(url))",
-		)
-		webConfigSetJsExtension(&App.webConfig, true)
-		webConfigSetPageCache(&App.webConfig, true)
-		webConfigSetBootLoadingIcon(&App.webConfig, true)
-		webConfigSetWhitelist(&App.webConfig, ".*")
+		// let url =
+		// 	"https://static.llsc12.me/discord?ip=\(deviceIP)&auth=\(Request.URLEncode(authURL))"
+
+		// // Create web page with QR code for user
+		// App.webConfig = .init()
+		// var reply = WebCommonReply()
+		// _ = webPageCreate(
+		// 	&App.webConfig,
+		// 	"https://static.llsc12.me/discord/qr?url=\(Request.URLEncode(url))",
+		// )
+		// webConfigSetJsExtension(&App.webConfig, true)
+		// webConfigSetPageCache(&App.webConfig, true)
+		// webConfigSetBootLoadingIcon(&App.webConfig, true)
+		// webConfigSetWhitelist(&App.webConfig, ".*")
+		// _ = webConfigShow(&App.webConfig, &reply)  // this blocks until the user closes the web page, but other thread will close it after 5 seconds to free this one
+		// //				var exitReason = WebExitReason_UnknownE
+		// //				webReplyGetExitReason(&reply, &exitReason)
+		// using exitreason isnt working no clue why, so ill check if server is still running instead
+
+
 		_ = threadCreate(&thread, serverWork, nil, nil, 0x4000, 0x3B, 2)
 		threadStart(&thread)
-		_ = webConfigShow(&App.webConfig, &reply)  // this blocks until the user closes the web page, but other thread will close it after 5 seconds to free this one
-		//				var exitReason = WebExitReason_UnknownE
-		//				webReplyGetExitReason(&reply, &exitReason)
-		// using exitreason isnt working no clue why, so ill check if server is still running instead
-		if App.server.isRunning {
-			// webpage closed by user or timeout maybe?
-			threadPause(&thread)  // i dont think you can cancel a thread, so we just pause it and cleanup
-			threadClose(&thread)  // cleanup
-			App.server.stop()  // stop the server
 
-			log("Process was interrupted or timed out, stopping...", rd: true)
-			return
-		} else {
-			// just in case, wait for the thread to finish
-			// server is stopped, so we will wait for it to finish
-			threadWaitForExit(&thread)  // just in case, wait for the thread to finish
-		}
+		let url = "http://\(deviceIP):45601"
+		log("Enter this url into your browser to log in:\n\n\(url)", rd: true)
+		consoleUpdate(nil)  // push new frame
+
+		threadWaitForExit(&thread)
 		threadClose(&thread)  // cleanup
 
 		guard App.server.state == state else {
