@@ -3,8 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <string>
+#include <time.h>
 #include <set>
 #include <fstream>
 
@@ -14,6 +14,7 @@
 
 #include "discord.hpp"
 #include "logging.hpp"
+#include "utilities.hpp"
 
 const char* clientId = "1249119754522857616";
 
@@ -218,11 +219,9 @@ bool refreshAuthTokenIfNeeded() {
     struct curl_slist* headers = NULL;
     headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded; charset=utf-8");
     std::string bodyStr = "grant_type=refresh_token&refresh_token=" + refreshToken + "&client_id=" + clientId;
-    char* body = strdup(bodyStr.c_str());
-        
+
     std::string response = "";
-    bool success = sendRequest(url, method, headers, body, &response);   
-    free(body);
+    bool success = sendRequest(url, method, headers, bodyStr.c_str(), &response);
 
     if (!success) {
         writeToLog("[Discord] Failed to send request for auth token refresh!");
@@ -323,12 +322,14 @@ void discordCleanupStaleSessions() {
 void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool includeToken) {
     writeToLog("[Discord] Creating/Updating session for TID: %016llX (%s)", (unsigned long long)titleId, titleName.c_str());
     
-    std::string tinfoilUrl;
-    char titleIdStr[17] = {0};
-    snprintf(titleIdStr, sizeof(titleIdStr), "%016llX", (unsigned long long)titleId);
-    tinfoilUrl = "https://tinfoil.media/ti/";   
-    tinfoilUrl += titleIdStr;
-    tinfoilUrl += "/512/512/";
+    // tries to fetch eshop icon, else falls back to tinfoil media icon
+    std::string iconUrl;
+    if (!fetchEshopIconUrl(titleId, iconUrl)) {
+        char titleIdStr[17] = {0};
+        snprintf(titleIdStr, sizeof(titleIdStr), "%016llX", (unsigned long long)titleId);
+        iconUrl = std::string("https://tinfoil.media/ti/") + titleIdStr + "/512/512/";
+        writeToLog("[Discord] Falling back to tinfoil for icon: %s", iconUrl.c_str());
+    }
 
     // make json body
     json_object* json_body = json_object_new_object();
@@ -342,7 +343,7 @@ void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool
     json_object_object_add(json_activity, "state", json_object_new_string("Nintendo Switch"));
     
     json_object* json_assets = json_object_new_object();
-    json_object_object_add(json_assets, "large_image", json_object_new_string(tinfoilUrl.c_str()));
+    json_object_object_add(json_assets, "large_image", json_object_new_string(iconUrl.c_str()));
     json_object_object_add(json_activity, "assets", json_assets);
     
     json_object_array_add(json_activities, json_activity);

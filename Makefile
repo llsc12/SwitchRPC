@@ -1,9 +1,12 @@
 COMPONENTS := SwitchRPC SwitchRPCConfig
 TOPTARGETS := all clean
 
-TITLEID ?= 3120000000000092
+TITLEID     ?= 3120000000000092
+SWITCH_IP   ?= 192.168.0.33
+SWITCH_PORT ?= 5000
+SWITCH_FTP  := ftp://$(SWITCH_IP):$(SWITCH_PORT)
 
-.PHONY: $(TOPTARGETS) $(COMPONENTS)
+.PHONY: $(TOPTARGETS) $(COMPONENTS) install
 
 TOPDIR ?= $(CURDIR)
 
@@ -48,6 +51,22 @@ SwitchRPC:
 
 SwitchRPCConfig:
 	$(MAKE) -C Sources/SwitchRPCConfig
+
+install:
+	@test -f SwitchRPC.zip || (echo "SwitchRPC.zip not found — run 'make' first" && exit 1)
+	@echo Installing to Switch @ $(SWITCH_IP):$(SWITCH_PORT)...
+	@rm -rf /tmp/switchrpc-install
+	@unzip -q SwitchRPC.zip -d /tmp/switchrpc-install
+	@curl -s --ftp-create-dirs -T /tmp/switchrpc-install/SwitchRPC/atmosphere/contents/$(TITLEID)/exefs.nsp \
+		$(SWITCH_FTP)/atmosphere/contents/$(TITLEID)/
+	@curl -s --ftp-create-dirs -T /tmp/switchrpc-install/SwitchRPC/atmosphere/contents/$(TITLEID)/toolbox.json \
+		$(SWITCH_FTP)/atmosphere/contents/$(TITLEID)/
+	@curl -s --ftp-create-dirs -T /tmp/switchrpc-install/SwitchRPC/atmosphere/contents/$(TITLEID)/flags/boot2.flag \
+		$(SWITCH_FTP)/atmosphere/contents/$(TITLEID)/flags/
+	@curl -s --ftp-create-dirs -T /tmp/switchrpc-install/SwitchRPC/switch/SwitchRPCConfig.nro \
+		$(SWITCH_FTP)/switch/
+	@rm -rf /tmp/switchrpc-install
+	@echo "[DONE] Restart your Switch to apply changes."
 
 clean:
 	@$(MAKE) -C Sources/SwitchRPC clean
