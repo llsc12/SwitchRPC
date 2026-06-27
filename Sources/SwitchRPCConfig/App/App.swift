@@ -14,6 +14,7 @@ struct App: NXApp {
 
 	mutating func runloop(_ ctx: inout RunLoopContext) {  // runs in a loop, calling ctx.exit() ends the app
 		ctx.pad.update()
+		menu.setupIfNeeded()
 		menu.tick(&ctx)
 
 		if menu.wasInvalidated {
@@ -57,36 +58,24 @@ struct App: NXApp {
 	}
 }
 
+/// One selectable row in the profile menu (a Switch user, or the default).
+struct ProfileEntry {
+	var uid: String        // switch_uid string
+	var nickname: String   // display name
+	var isDefault: Bool    // true for the "Default (all profiles)" pseudo-entry
+}
+
 struct Menu {
 	var wasInvalidated = true  // redraw flag
 
 	// Menu state variables
-	var isLoggedIn = checkLogin()
-	// var sysmoduleEnabled = Utilities.isSysmoduleRunning(titleId: sysmoduleTitleId) {
-	// 	didSet {
-	// 		if sysmoduleEnabled {
-	// 			Utilities.startSysmodule(titleId: sysmoduleTitleId)
-	// 			log("Sysmodule enabled")
-	// 		} else {
-	// 			Utilities.stopSysmodule(titleId: sysmoduleTitleId)
-	// 			log("Sysmodule disabled")
-	// 		}
-	// 		Utilities.setSysmoduleAutoBoot(titleId: sysmoduleTitleId, enable: sysmoduleEnabled)
-	// 	}
-	// }
 	var selectedIndex = 0
+	var didSetup = false
 
-	static func checkLogin() -> Bool {
-		let path = "sdmc:/config/switchrpc_token"
-		if let file = fopen(path, "r") {
-			var tokenBuffer = [CChar](repeating: 0, count: 512)
-			fgets(&tokenBuffer, Int32(tokenBuffer.count), file)
-			fclose(file)
-			let token = String(cStr: tokenBuffer)
-			return !token.isEmpty
-		}
-		return false
-	}
+	/// Switch profiles plus the trailing default pseudo-entry.
+	var entries: [ProfileEntry] = []
+	/// Current Switch -> Discord links, for status display.
+	var links: [Link] = []
 
 	var logs: [String] = [] {
 		didSet {
@@ -97,15 +86,91 @@ struct Menu {
 		}
 	}
 
-	// Computed menu options depending on context
-	var currentOptions: [String] {
-		[
-			isLoggedIn ? "Log out" : "Log in",
-			// sysmoduleEnabled ? "Disable sysmodule" : "Enable sysmodule",
-			"Exit app",
-			// "[DEBUG] Get current process",
-		]
+	// MARK: - Setup / reload
+
+	mutating func setupIfNeeded() {
+		if didSetup { return }
+		didSetup = true
+		ProfileStore.migrateLegacyIfNeeded()
+		reload()
 	}
+
+	mutating func reload() {
+		self.links = ProfileStore.load()
+		self.entries = Menu.enumerateProfiles()
+		// keep the selection in range (entries + trailing "Exit app")
+		let count = entries.count + 1
+		if selectedIndex >= count { selectedIndex = 0 }
+		self.wasInvalidated = true
+	}
+
+	/// Build the profile list: the Switch users (read from switchrpc_users.json,
+	/// which the sysmodule writes because the config app can't read the account
+	/// service when launched as an applet), then the "Default" pseudo-entry.
+	static func enumerateProfiles() -> [ProfileEntry] {
+		var result: [ProfileEntry] = []
+
+		let users = ProfileStore.loadSwitchUsers()
+		for u in users {
+			result.append(
+				ProfileEntry(uid: u.uid, nickname: u.nickname, isDefault: false)
+			)
+		}
+
+		// Fallback: if that file isn't present yet (sysmodule hasn't run), try the
+		// account service directly — only works if launched in application mode.
+		if users.isEmpty {
+			var uids = [AccountUid](repeating: AccountUid(), count: 8)
+			var total: Int32 = 0
+			if accountListAllUsers(&uids, 8, &total).succeeded {
+				var i = 0
+				while i < Int(total) && i < uids.count {
+					let uid = uids[i]
+					result.append(
+						ProfileEntry(
+							uid: ProfileStore.uidToString(uid),
+							nickname: getNickname(uid) ?? "Unknown",
+							isDefault: false
+						)
+					)
+					i += 1
+				}
+			}
+		}
+
+		result.append(
+			ProfileEntry(
+				uid: ProfileStore.defaultUid,
+				nickname: "Default (all profiles)",
+				isDefault: true
+			)
+		)
+		return result
+	}
+
+	/// Read a Switch user's nickname via accountGetProfile/accountProfileGet.
+	static func getNickname(_ uid: AccountUid) -> String? {
+		var profile = AccountProfile()
+		guard accountGetProfile(&profile, uid).succeeded else { return nil }
+		defer { accountProfileClose(&profile) }
+		var base = AccountProfileBase()
+		guard accountProfileGet(&profile, nil, &base).succeeded else { return nil }
+		let nickname = withUnsafeBytes(of: base.nickname) { rawPtr -> String in
+			let buffer = rawPtr.bindMemory(to: CChar.self)
+			return String(cString: buffer.baseAddress!)
+		}
+		return nickname.isEmpty ? nil : nickname
+	}
+
+	/// Find the link for a given switch_uid, if any.
+	func linkFor(_ uid: String) -> Link? {
+		for link in links {
+			if link.switchUid == uid { return link }
+		}
+		return nil
+	}
+
+	// MARK: - Input
 
 	mutating func tick(_ ctx: inout RunLoopContext) {
 		// Handle exit request
@@ -113,33 +178,44 @@ struct Menu {
 			ctx.exit()
 			return
 		}
-		
+
+		let count = entries.count + 1  // +1 for trailing "Exit app"
+
 		// Move selection
 		if ctx.pad.wasButtonPressed(.anyDown) {
 			self.wasInvalidated = true
-			selectedIndex = (selectedIndex + 1) % currentOptions.count
+			selectedIndex = (selectedIndex + 1) % count
 		}
 		if ctx.pad.wasButtonPressed(.anyUp) {
 			self.wasInvalidated = true
-			selectedIndex =
-				(selectedIndex - 1 + currentOptions.count) % currentOptions.count
+			selectedIndex = (selectedIndex - 1 + count) % count
 		}
 
-		// Select option
+		// A: link/relink a profile, or exit on the trailing row
 		if ctx.pad.wasButtonPressed(.a) {
 			self.wasInvalidated = true
-			switch selectedIndex {
-			// log in/log out
-			case 0: self.isLoggedIn ? self.logOut() : self.logIn()
-			// case 1: sysmoduleEnabled.toggle()
-			case 1: ctx.exit()
-			// case 3: process()
-			default: break
+			if selectedIndex < entries.count {
+				linkFlow(for: entries[selectedIndex], &ctx)
+			} else {
+				ctx.exit()
+			}
+		}
+
+		// X: unlink a linked profile
+		if ctx.pad.wasButtonPressed(.x) {
+			if selectedIndex < entries.count {
+				let entry = entries[selectedIndex]
+				if linkFor(entry.uid) != nil {
+					self.wasInvalidated = true
+					unlink(entry)
+				}
 			}
 		}
 	}
 
-	mutating func logIn() {
+	// MARK: - Link flow
+
+	mutating func linkFlow(for entry: ProfileEntry, _ ctx: inout RunLoopContext) {
 		//		 --- Start server ---
 		let serverWork: ThreadFunc = { conf in
 			App.server.start()
@@ -170,46 +246,59 @@ struct Menu {
 
 		App.server.codeChallenge = codeChallenge
 		App.server.state = state
-
-		// // urls
-		// let authURL =
-		// 	"https://discord.com/oauth2/authorize?client_id=\(DiscordConsts.ClientID)&response_type=code&scope=\(Request.URLEncode(DiscordConsts.scope))&code_challenge=\(codeChallenge)&code_challenge_method=\("S256")&state=\(state)&redirect_uri=\(Request.URLEncode(DiscordConsts.redirectURI))"
-
-		// let url =
-		// 	"https://static.llsc12.me/discord?ip=\(deviceIP)&auth=\(Request.URLEncode(authURL))"
-
-		// // Create web page with QR code for user
-		// App.webConfig = .init()
-		// var reply = WebCommonReply()
-		// _ = webPageCreate(
-		// 	&App.webConfig,
-		// 	"https://static.llsc12.me/discord/qr?url=\(Request.URLEncode(url))",
-		// )
-		// webConfigSetJsExtension(&App.webConfig, true)
-		// webConfigSetPageCache(&App.webConfig, true)
-		// webConfigSetBootLoadingIcon(&App.webConfig, true)
-		// webConfigSetWhitelist(&App.webConfig, ".*")
-		// _ = webConfigShow(&App.webConfig, &reply)  // this blocks until the user closes the web page, but other thread will close it after 5 seconds to free this one
-		// //				var exitReason = WebExitReason_UnknownE
-		// //				webReplyGetExitReason(&reply, &exitReason)
-		// using exitreason isnt working no clue why, so ill check if server is still running instead
-
+		App.server.code = nil  // clear any stale code from a previous attempt
 
 		_ = threadCreate(&thread, serverWork, nil, nil, 0x4000, 0x3B, 2)
 		threadStart(&thread)
 
 		let url = "http://\(deviceIP):45601"
-		log("Enter this url into your browser to log in:\n\n\(url)", rd: true)
+
+		// Render an on-device QR code for the pairing URL, with the URL printed
+		// below as a fallback. (QRCode is owned by the QR agent.)
+		consoleClear()
+		print("\nLink \(entry.nickname) to Discord\n")
+		if let matrix = QRCode.encode(url) {
+			QRCode.render(matrix)
+		}
+		print("\nScan the QR code with your phone, or open this URL in a browser:\n")
+		print(url)
+		print("\nPress B to cancel.")
 		consoleUpdate(nil)  // push new frame
+
+		// Wait for the pairing callback, but let the user cancel with B or time
+		// out, so the app never freezes if pairing is never completed.
+		var waitedMs = 0
+		let timeoutMs = 180_000  // 3 minutes
+		while App.server.isRunning {
+			ctx.pad.update()
+			if ctx.pad.wasButtonPressed(.b) {
+				App.server.stop()
+				log("Pairing cancelled.", rd: true)
+				break
+			}
+			if waitedMs >= timeoutMs {
+				App.server.stop()
+				log("Pairing timed out.", rd: true)
+				break
+			}
+			Thread.sleep(for: .milliseconds(16))
+			waitedMs += 16
+		}
 
 		threadWaitForExit(&thread)
 		threadClose(&thread)  // cleanup
 
+		let dcode = App.server.code
+
+		// No code means the user cancelled or it timed out; just redraw.
+		guard dcode != nil else {
+			reload()
+			return
+		}
 		guard App.server.state == state else {
 			log("State mismatch, stopping...\n", rd: true)
 			return
 		}
-		let dcode = App.server.code
 
 		log("\nReceived auth data, retrieving tokens...", rd: true)
 
@@ -217,19 +306,21 @@ struct Menu {
 			do {
 				try App.discord.authenticate(code: code, codeVerifier: codeVerifier)
 
-				let me = try App.discord.me()
-				let username = me["user"]["username"].string ?? "Unknown User"
+				let user = try App.discord.meUser()
+				let username = user.username.isEmpty ? "Unknown User" : user.username
 				log("Hello, \(username)!")
 
-				// save token to file for later use
+				// upsert the link for the chosen switch_uid
 				if let token = App.discord.auth?.refreshToken {
-					// save using fs module
-					let path = "sdmc:/config/switchrpc_token"
-					if let file = fopen(path, "w") {
-						fputs(token, file)
-						fclose(file)
-					}
-					isLoggedIn = true
+					let link = Link(
+						switchUid: entry.uid,
+						switchNickname: entry.nickname,
+						discordId: user.id,
+						discordUsername: username,
+						refreshToken: token
+					)
+					ProfileStore.upsert(link)
+					reload()
 				}
 			} catch {
 				log("Failed: \(error.errorDescription ?? "Unknown error")")
@@ -237,17 +328,10 @@ struct Menu {
 		}
 	}
 
-	mutating func logOut() {
-		// delete token file
-		let path = "sdmc:/config/switchrpc_token"
-		remove(path)
-		isLoggedIn = false
-		log("Logged out", rd: true)
-	}
-
-	mutating func process() {
-		let data = Utilities.GetCurrentProcessData()
-		log("app: \(data?.title ?? "No App Open")")
+	mutating func unlink(_ entry: ProfileEntry) {
+		ProfileStore.removeLink(switchUid: entry.uid)
+		log("Unlinked \(entry.nickname)", rd: true)
+		reload()
 	}
 
 	mutating func log(_ message: String, rd: Bool = false) {
@@ -259,21 +343,33 @@ struct Menu {
 extension Menu {
 	mutating func draw() {
 		print("\nSwitchRPC\n")
-		for (i, line) in self.currentOptions.enumerated() {
+		print("Select a profile, then press A to link Discord.\n")
+
+		for (i, entry) in self.entries.enumerated() {
 			let selector = (i == self.selectedIndex) ? "-> " : "   "
-			print("  \(selector)\(line)")
+			let status: String
+			if let link = linkFor(entry.uid), !link.discordUsername.isEmpty {
+				status = "Discord: \(link.discordUsername)"
+			} else if linkFor(entry.uid) != nil {
+				status = "Discord: linked"
+			} else {
+				status = "not linked"
+			}
+			print("  \(selector)\(entry.nickname)  [\(status)]")
 		}
-		print("\n\n")
-		print("By llsc12")
+
+		// trailing "Exit app" row
+		let exitIndex = self.entries.count
+		let exitSelector = (self.selectedIndex == exitIndex) ? "-> " : "   "
+		print("  \(exitSelector)Exit app")
+
 		print("\n")
-		print(
-			"[ Logs ]\n"
-		)
+		print("A: link/relink    X: unlink    +: exit")
+		print("\nBy llsc12\n")
+		print("[ Logs ]\n")
 		for log in self.logs {
 			print(log)
 		}
-
-		print("\n\n\n\n\n                    yop")
 	}
 
 	mutating func forceRedraw() {
