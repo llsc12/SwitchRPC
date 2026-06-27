@@ -66,8 +66,14 @@ LIBS := -lnx `curl-config --libs` -ljson-c
 
 # Swift specific flags
 CFLAGS += -DNXApp
-# SWIFTC := swiftc
-SWIFT_TOOLCHAIN := /Users/lakhanlothiyi/Library/Developer/Toolchains/swift-6.2-DEVELOPMENT-SNAPSHOT-2025-07-09-a.xctoolchain
+# Embedded Swift toolchain (a Swift development snapshot with Embedded support).
+# Override explicitly:  make SWIFT_TOOLCHAIN=/path/to/your.xctoolchain
+# or `export SWIFT_TOOLCHAIN=...`; otherwise auto-detect the newest snapshot
+# installed in ~/Library/Developer/Toolchains (macOS).
+SWIFT_TOOLCHAIN ?= $(lastword $(sort $(wildcard $(HOME)/Library/Developer/Toolchains/*.xctoolchain /Library/Developer/Toolchains/*.xctoolchain)))
+ifeq ($(strip $(SWIFT_TOOLCHAIN)),)
+$(error No Swift toolchain found. Install a Swift snapshot to ~/Library/Developer/Toolchains or set SWIFT_TOOLCHAIN=/path/to/your.xctoolchain)
+endif
 SWIFTC := $(SWIFT_TOOLCHAIN)/usr/bin/swiftc
 UNICODE_SUPPORT = $(SWIFT_TOOLCHAIN)/usr/lib/swift/embedded/aarch64-none-none-elf/libswiftUnicodeDataTables.a
 
@@ -261,7 +267,7 @@ $(OFILES_SRC)	: $(HFILES_BIN)
 
 $(OBJ_DIR)/app.o: $(LL_DIR)/app.ll
 	@mkdir -p $(OBJ_DIR)
-	@clang -target aarch64 -fpic -ffreestanding \
+	@$(SWIFT_TOOLCHAIN)/usr/bin/clang -target aarch64 -fpic -ffreestanding \
 		-c $(LL_DIR)/app.ll -o $(OBJ_DIR)/app.o
 
 $(LL_DIR)/app.ll: $(SWIFT_SRCS)
