@@ -153,19 +153,36 @@ void __appInit(void)
 	nsInitialize();
 	setInitialize();
 
+	// account service: needed for accountGetLastOpenedUser() to resolve which
+	// Switch user is currently playing. Per the contract we use a System session;
+	// if a System session cannot call accountGetLastOpenedUser on a given
+	// firmware, switch this to AccountServiceType_Application.
+	rc = accountInitialize(AccountServiceType_System);
+	if (R_FAILED(rc))
+		writeToLog("[SwitchRPC] Warning: accountInitialize failed with 0x%08X. User resolution will fail.", rc);
+
     // Close the service manager session.
     smExit();
 }
 
+// the link whose headless session is currently active (points into the
+// discord.cpp link table). nullptr when no session is active. Kept at file
+// scope so __appExit can tear the active session down on process exit.
+static Link* g_activeLink = nullptr;
+
 // Service deinitialization.
 void __appExit(void)
 {
-    discordDeleteHeadlessSession();
+    if (g_activeLink != nullptr) {
+        discordDeleteHeadlessSession(*g_activeLink);
+        g_activeLink = nullptr;
+    }
     writeToLog("[SwitchRPC] Sysmodule exiting. Goodbye!");
 
     curl_global_cleanup();
 
     socketExit();
+    accountExit();
     setExit();
     nsExit();
     pmdmntExit();
@@ -182,69 +199,163 @@ void __appExit(void)
 #endif
 
 
-const int REFRESH_INTERVAL = 15 * 60; 
+const int REFRESH_INTERVAL = 15 * 60;
+
+// Enumerate every Switch user (uid + nickname) and write them to
+// sdmc:/config/switchrpc_users.json. The config app can't read the account
+// service when launched as an applet, so it reads this file instead.
+static void logAllSwitchUsers() {
+    AccountUid uids[8];
+    s32 total = 0;
+    Result rc = accountListAllUsers(uids, 8, &total);
+    writeToLog("[SwitchRPC] accountListAllUsers rc=0x%08X total=%d", (unsigned)rc, total);
+
+    json_object* root = json_object_new_object();
+    json_object* arr = json_object_new_array();
+
+    for (s32 i = 0; i < total && i < 8; i++) {
+        char nick[0x21] = {0};
+        AccountProfile profile;
+        if (R_SUCCEEDED(accountGetProfile(&profile, uids[i]))) {
+            AccountProfileBase base = {0};
+            if (R_SUCCEEDED(accountProfileGet(&profile, NULL, &base))) {
+                strncpy(nick, base.nickname, sizeof(nick) - 1);
+            }
+            accountProfileClose(&profile);
+        }
+        std::string uidStr = accountUidToString(uids[i]);
+        writeToLog("[SwitchRPC]   user[%d] uid=%s nick=%s", (int)i, uidStr.c_str(), nick);
+
+        json_object* u = json_object_new_object();
+        json_object_object_add(u, "uid", json_object_new_string(uidStr.c_str()));
+        json_object_object_add(u, "nickname", json_object_new_string(nick));
+        json_object_array_add(arr, u); // arr takes ownership
+    }
+
+    json_object_object_add(root, "users", arr); // root takes ownership
+    FILE* f = fopen("sdmc:/config/switchrpc_users.json", "w");
+    if (f) {
+        fputs(json_object_to_json_string(root), f);
+        fclose(f);
+        writeToLog("[SwitchRPC] Wrote switchrpc_users.json (%d user(s)).", (int)total);
+    } else {
+        writeToLog("[SwitchRPC] Failed to write switchrpc_users.json!");
+    }
+    json_object_put(root);
+}
 
 int main(int argc, char* argv[])
 {
     writeToLog("[SwitchRPC] Sysmodule started successfully.");
 
-    AppInfo lastInfo = {0};
+    // Active-session state (replaces the old single-account lastInfo model).
+    // g_activeLink (file scope) points to the link whose session is active, or
+    // nullptr when none is active. activeTid is the game tid that the active
+    // state corresponds to (tracked even when no link resolves, so we don't
+    // re-evaluate the same game every loop). last_update_time drives the
+    // periodic refresh.
+    u64 activeTid = 0;
     time_t last_update_time = 0;
 
-    // Start by cleaning up stale sessions 
+    // Load links, then clean up any sessions left over from a previous run
+    // (uses the just-loaded links to find the right credentials per session).
+    loadLinks();
+    logAllSwitchUsers();
     discordCleanupStaleSessions();
-    
+
     waitForNetworkReady();
     while (true) {
+        // Reload links whenever no session is active so newly-linked profiles
+        // are picked up. Safe only when g_activeLink is nullptr because
+        // loadLinks() rebuilds the table and would invalidate the pointer.
+        if (g_activeLink == nullptr) {
+            loadLinks();
+        }
+
         AppInfo info = {0};
         Result rc = get_app_info(&info);
-        
+
         bool is_game_running = R_SUCCEEDED(rc) && info.tid != 0;
 
         if (is_game_running) {
-            // user opened a game or switched a game or switched from home menu to game (tid changed)
-            if (info.tid != lastInfo.tid) {
-                // if lastInfo.tid != 0, we already had a session running, so we include the token to update it.
-                // if lastInfo.tid == 0, it's a brand new session, so no token is included.
-                bool has_existing_session = (lastInfo.tid != 0);
-                
-                writeToLog("[SwitchRPC] Game state changed! New TID: %016llX, Name: %s. Previous TID: %016llX", 
-                           (unsigned long long)info.tid, info.title_name, (unsigned long long)lastInfo.tid);
+            // Determine which Switch user is currently playing and resolve the
+            // link for that user (exact match, else default/wildcard, else none).
+            AccountUid uid = {0};
+            Result urc = accountGetLastOpenedUser(&uid);
+            if (R_FAILED(urc)) {
+                writeToLog("[SwitchRPC] accountGetLastOpenedUser failed (0x%08X); falling back to default link.", urc);
+                uid.uid[0] = 0; // zero -> resolveLink returns default/wildcard if present
+                uid.uid[1] = 0;
+            }
+            Link* resolved = resolveLink(uid);
 
-                lastInfo = info;
-                last_update_time = time(NULL);
-                
-                // create/update session.
-                discordCreateHeadlessSession(info.tid, std::string(info.title_name), has_existing_session);
-            } 
-            // the same game is still open. refresh.
-            else {
+            bool tidChanged = (info.tid != activeTid);
+            bool linkChanged = (resolved != g_activeLink);
+
+            if (tidChanged || linkChanged) {
+                writeToLog("[SwitchRPC] State change. New TID: %016llX (%s), prev TID: %016llX. Link changed: %s",
+                           (unsigned long long)info.tid, info.title_name,
+                           (unsigned long long)activeTid, linkChanged ? "yes" : "no");
+                writeToLog("[SwitchRPC] Detected playing user: rc=0x%08X uid=%s -> resolved link=%s",
+                           (unsigned)urc, accountUidToString(uid).c_str(),
+                           resolved ? resolved->switchUidStr.c_str() : "(none)");
+
+                // tear down the previous active session with the PREVIOUS link's
+                // credentials before switching identities.
+                if (g_activeLink != nullptr) {
+                    discordDeleteHeadlessSession(*g_activeLink);
+                    g_activeLink = nullptr;
+                }
+
+                if (resolved != nullptr) {
+                    // brand-new session for the resolved link (no token reuse).
+                    bool ok = discordCreateHeadlessSession(*resolved, info.tid, std::string(info.title_name), false);
+                    if (ok) {
+                        g_activeLink = resolved;
+                        last_update_time = time(NULL);
+                    } else {
+                        // create failed: stay inactive so the next loop retries
+                        // promptly (linkChanged stays true while g_activeLink is
+                        // null and a link still resolves).
+                        g_activeLink = nullptr;
+                        last_update_time = 0;
+                        writeToLog("[SwitchRPC] Session create failed; will retry shortly.");
+                    }
+                } else {
+                    writeToLog("[SwitchRPC] No link for the current user; not pushing presence.");
+                    last_update_time = 0;
+                }
+                // track the tid regardless so we don't re-evaluate every loop.
+                activeTid = info.tid;
+            }
+            // same game & same resolved link: periodic refresh.
+            else if (g_activeLink != nullptr) {
                 time_t current_time = time(NULL);
-                // check time interval
                 if (current_time - last_update_time >= REFRESH_INTERVAL) {
-                    writeToLog("[SwitchRPC] Periodic session refresh triggered for TID: %016llX", (unsigned long long)info.tid);
-                    last_update_time = current_time;
-                    
-                    // refresh session with session token that we have if any.
-                    discordCreateHeadlessSession(info.tid, std::string(info.title_name), true);
+                    writeToLog("[SwitchRPC] Periodic session refresh for TID: %016llX", (unsigned long long)info.tid);
+                    bool ok = discordCreateHeadlessSession(*g_activeLink, info.tid, std::string(info.title_name), true);
+                    if (ok) {
+                        last_update_time = current_time;
+                    }
+                    // on failure, leave last_update_time so the refresh retries on
+                    // the next loop instead of waiting another full interval.
                 }
             }
         } else {
-            // user isn't in a game. if we had a session before, delete it since the game closed, and reset lastInfo.
-            if (lastInfo.tid != 0) {
-                writeToLog("[SwitchRPC] Game closed or returned to Home Menu. Clearing session for TID: %016llX", (unsigned long long)lastInfo.tid);
+            // No game running. Tear down any active session, clear state.
+            if (g_activeLink != nullptr) {
+                writeToLog("[SwitchRPC] Game closed / Home Menu. Clearing active session.");
                 waitForNetworkReady();
-
-                lastInfo = {0};
-                last_update_time = 0;
-                
-                discordDeleteHeadlessSession();
+                discordDeleteHeadlessSession(*g_activeLink);
+                g_activeLink = nullptr;
             }
+            activeTid = 0;
+            last_update_time = 0;
         }
 
         // sleep detection
         time_t sleep_start = time(NULL);
-        svcSleepThread(10 * 1000 * 1000 * 1000ULL); 
+        svcSleepThread(10 * 1000 * 1000 * 1000ULL);
         time_t sleep_end = time(NULL);
 
         if (sleep_end - sleep_start > 15) {
@@ -252,8 +363,13 @@ int main(int argc, char* argv[])
             waitForNetworkReady();
             writeToLog("[SwitchRPC] Network ready after sleep, clearing sessions.");
 
-            last_update_time = 0; 
-            discordCleanupStaleSessions(); // cleanup any sessions we created prior.
+            // drop active state (its session may be invalid after sleep), then
+            // reload links and clean up everything recorded on disk.
+            g_activeLink = nullptr;
+            activeTid = 0;
+            last_update_time = 0;
+            loadLinks();
+            discordCleanupStaleSessions();
         }
     }
 

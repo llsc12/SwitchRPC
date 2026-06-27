@@ -5,6 +5,20 @@ Does not rely on anything other than your Switch and a mobile device for logging
 
 The rich presence is handled on the Switch itself, without the need for external tools on other computers.
 
+## Per-user Discord linking
+
+Each Nintendo Switch user profile can be linked to its own Discord account. The config app lists every Switch profile (plus a "Default (all profiles)" entry for any profile that isn't linked individually) along with its current link status, so you can give each person on the console their own Discord identity.
+
+When a game is running, the sysmodule looks up the currently-playing Switch user and pushes presence to **that** user's linked Discord account only. Presence is no longer mirrored to every linked account at once. Since the Switch only runs one application at a time, there is at most one active Discord session at a time, and the active Discord identity follows whichever Switch user is playing.
+
+If a profile has no link of its own, the Default link (if set) is used as a fallback. If neither exists, no presence is pushed for that user.
+
+In the config app:
+- Up/Down move between profiles.
+- A links a profile (or relinks one that is already linked).
+- X unlinks a linked profile.
+- Plus exits the app.
+
 > [!TIP]
 > Like this project? Own a Mac for developing? You might like [XRPC, Xcode Rich Presence done right](https://github.com/llsc12/XRPC).
 
@@ -17,15 +31,17 @@ Relies on tinfoil.io for game artworks. Uses Discord Social SDK endpoints for au
 
 Written in Embedded Swift!
 
+## Pairing
+
+Linking a profile is done entirely on-device. When you start a link, the Switch renders a QR code directly on its own screen (no web applet, no external page) pointing at the Switch's local web server, e.g. `http://<switch_ip>:45601`. Scan it with your phone, or type the URL printed underneath the QR code as a fallback.
+
+Your phone opens the local page, which kicks off the Discord OAuth2 (PKCE) flow. Once you approve, Discord redirects back to the Switch's local web server with the code and state, the Switch exchanges the code for tokens, fetches your Discord id and username, and saves the link for the profile you chose.
+
 ## Privacy
 
-The OAuth2 process happens through the Switch showing a web page at `https://static.llsc12.me/discord/qr?url=<discord_auth_shim>`.
+The OAuth2 process happens entirely between your Switch, your phone, and Discord. The QR code is generated and displayed locally on the Switch screen, so no external/static web page is involved in showing it.
 
-This page is a static page that renders a QR code for you to scan on your mobile device, leading to `https://static.llsc12.me/discord?ip=<switch_ip>&auth=<discord_oauth2_url>`.
-
-The Discord OAuth2 flow will redirect back to `https://static.llsc12.me/discord` again, with the code and state params from the Discord OAuth2 flow. The page will redirect again to the IP address of the Switch, which will be picked up by the Switch and you will be authenticated.
-
-All pages from this subdomain are static and hosted on GitHub Pages, you can examine them with inspect element to see exactly what they do.
+The QR code (and its fallback URL) point to the Switch's own local web server on your network (`http://<switch_ip>:45601`). The Discord OAuth2 flow redirects the code and state back to that local address, which the Switch picks up to complete authentication. Discord refresh tokens are stored on the SD card per linked profile.
 
 ## Credits
 

@@ -19,7 +19,7 @@ class Discord {
 	
 	func me() throws(DiscordError) -> JSONValue {
 		let auth = try checkAuth()
-		
+
 		var res: Response
 		do {
 			res = try Request(url: "https://gaming-sdk.com/api/v9/oauth2/@me")
@@ -29,8 +29,31 @@ class Discord {
 		} catch {
 			throw .requestError(error)
 		}
-		
+
 		return .parse(from: res.data) ?? JSONValue.object([:])
+	}
+
+	/// The current Discord user's id + username, parsed from `me()`.
+	struct MeUser {
+		var id: String
+		var username: String
+	}
+
+	/// Fetches the authenticated Discord user, exposing the id and username
+	/// so callers can persist them into a Link.
+	func meUser() throws(DiscordError) -> MeUser {
+		let json = try me()
+		// The gaming-sdk @me response nests the account under "user"; tolerate a
+		// flat shape (id/username at top level) as a fallback just in case.
+		var username = json["user"]["username"].string ?? ""
+		if username.isEmpty { username = json["username"].string ?? "" }
+		var id = json["user"]["id"].string ?? ""
+		if id.isEmpty { id = json["id"].string ?? "" }
+		// Discord ids are usually strings, but tolerate a numeric form too.
+		if id.isEmpty, let intId = json["user"]["id"].int ?? json["id"].int {
+			id = "\(intId)"
+		}
+		return MeUser(id: id, username: username)
 	}
 
 	@discardableResult
