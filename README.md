@@ -13,7 +13,7 @@ Head over to [the releases](https://github.com/llsc12/SwitchRPC/releases/latest)
 
 ## Nerd details
 
-Relies on tinfoil.io for game artworks. Uses Discord Social SDK endpoints for auth and its scope allow pushing presence data.
+Relies on Nintendo's CDN for game artworks. Uses Discord Social SDK endpoints for auth and its scope allow pushing presence data.
 
 Written in Embedded Swift!
 
