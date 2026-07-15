@@ -1,9 +1,8 @@
-name: Build & Release
+name: CI
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -46,24 +45,3 @@ jobs:
         env:
           DEVKITPRO: /opt/devkitpro
         run: make
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: SwitchRPC
-          path: SwitchRPC.zip
-
-  release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: SwitchRPC
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          files: SwitchRPC.zip
