@@ -66,10 +66,26 @@ LIBS := -lnx `curl-config --libs` -ljson-c
 
 # Swift specific flags
 CFLAGS += -DNXApp
-# SWIFTC := swiftc
-SWIFT_TOOLCHAIN := /Users/lakhanlothiyi/Library/Developer/Toolchains/swift-6.2-DEVELOPMENT-SNAPSHOT-2025-07-09-a.xctoolchain
-SWIFTC := $(SWIFT_TOOLCHAIN)/usr/bin/swiftc
-UNICODE_SUPPORT = $(SWIFT_TOOLCHAIN)/usr/lib/swift/embedded/aarch64-none-none-elf/libswiftUnicodeDataTables.a
+
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+	SWIFTC := $(shell xcrun --toolchain swift --find swiftc 2>/dev/null)
+	ifeq ($(strip $(SWIFTC)),)
+		SWIFTC := $(shell xcrun --find swiftc 2>/dev/null)
+	endif
+else
+	SWIFTC := $(shell command -v swiftc 2>/dev/null)
+endif
+
+ifeq ($(strip $(SWIFTC)),)
+$(error "Could not locate swiftc. Install a Swift toolchain (eg. via swiftly: https://www.swift.org/install) and make sure it's discoverable")
+endif
+
+SWIFT_USR := $(patsubst %/bin/swiftc,%,$(SWIFTC))
+UNICODE_SUPPORT := $(SWIFT_USR)/lib/swift/embedded/aarch64-none-none-elf/libswiftUnicodeDataTables.a
+
+# clang bundled with the swift toolchain, in case the host has none on PATH
+SWIFT_CLANG := $(SWIFT_USR)/bin/clang
 
 # Recursive Swift file discovery
 SWIFT_SRCS := $(shell find .. -name "*.swift" -type f)
@@ -261,7 +277,7 @@ $(OFILES_SRC)	: $(HFILES_BIN)
 
 $(OBJ_DIR)/app.o: $(LL_DIR)/app.ll
 	@mkdir -p $(OBJ_DIR)
-	@clang -target aarch64 -fpic -ffreestanding \
+	@$(SWIFT_CLANG) -target aarch64 -fpic -ffreestanding \
 		-c $(LL_DIR)/app.ll -o $(OBJ_DIR)/app.o
 
 $(LL_DIR)/app.ll: $(SWIFT_SRCS)

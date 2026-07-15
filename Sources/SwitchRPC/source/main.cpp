@@ -122,7 +122,7 @@ void __appInit(void)
     if (R_FAILED(rc))
         diagAbortWithResult(MAKERESULT(Module_Libnx, LibnxError_InitFail_FS));
 
-    timeInitialize();
+    // timeInitialize();
     nifmInitialize(NifmServiceType_System);
 
     // Disable this if you don't want to use the SD card filesystem.
@@ -170,7 +170,7 @@ void __appExit(void)
     nsExit();
     pmdmntExit();
     nifmExit();
-    timeExit();
+    // timeExit();
 
     // Close extra services you added to __appInit here.
     fsdevUnmountAll(); // Disable this if you don't want to use the SD card filesystem.

@@ -1,0 +1,67 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+env:
+  SWIFT_VERSION: "6.3.3"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Swift toolchain
+        run: |
+          arch="$(uname -m)"
+          curl -fL -o /tmp/swift.tar.gz \
+            "https://download.swift.org/swift-${SWIFT_VERSION}-release/debian12-${arch}/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE-debian12-${arch}.tar.gz"
+          mkdir -p /opt/swift
+          tar -xzf /tmp/swift.tar.gz -C /opt/swift --strip-components=1
+          rm /tmp/swift.tar.gz
+          echo "/opt/swift/usr/bin" >> "$GITHUB_PATH"
+
+      - name: Install Swift runtime dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            binutils libc6-dev libcurl4-openssl-dev libedit2 libgcc-12-dev \
+            libncurses6 libpython3.11 libsqlite3-0 libstdc++-12-dev \
+            libxml2-dev libz3-dev pkg-config tzdata zlib1g-dev zip
+
+      - name: Install switch portlibs
+        run: |
+          dkp-pacman -Sy --noconfirm switch-curl switch-libjson-c
+          dkp-pacman -Scc --noconfirm
+
+      - name: Build
+        env:
+          DEVKITPRO: /opt/devkitpro
+        run: make
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SwitchRPC
+          path: SwitchRPC.zip
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: SwitchRPC
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: SwitchRPC.zip
