@@ -166,7 +166,7 @@ void __appInit(void)
     if (R_FAILED(rc))
         diagAbortWithResult(MAKERESULT(Module_Libnx, LibnxError_InitFail_FS));
 
-    // timeInitialize();
+    timeInitialize(); // time() for log timestamps, the refresh timer and token expiry
     nifmInitialize(NifmServiceType_System);
 
     // Disable this if you don't want to use the SD card filesystem.
@@ -225,7 +225,7 @@ void __appExit(void)
     nsExit();
     pmdmntExit();
     nifmExit();
-    // timeExit();
+    timeExit();
 
     // Close extra services you added to __appInit here.
     fsdevUnmountAll(); // Disable this if you don't want to use the SD card filesystem.
@@ -237,7 +237,14 @@ void __appExit(void)
 #endif
 
 
-const int REFRESH_INTERVAL = 15 * 60; 
+// logged in = the config app left a refresh token on the sd card
+static bool isLoggedIn() {
+    FILE* f = fopen("sdmc:/config/switchrpc_token", "r");
+    if (f) { fclose(f); return true; }
+    return false;
+}
+
+const int REFRESH_INTERVAL = 15 * 60;
 
 int main(int argc, char* argv[])
 {
@@ -245,6 +252,7 @@ int main(int argc, char* argv[])
 
     AppInfo lastInfo = {0};
     time_t last_update_time = 0;
+    bool wasLoggedIn = false;
 
     // Start by cleaning up stale sessions
     discordCleanupStaleSessions();
@@ -289,9 +297,20 @@ int main(int argc, char* argv[])
             last_update_time = 0;
         }
 
+        // user hit "log out" in the config app (token file is gone) - drop the
+        // session and stop pushing until they log back in
+        bool loggedIn = isLoggedIn();
+        if (wasLoggedIn && !loggedIn && !g_asleep) {
+            writeToLog("[SwitchRPC] Logged out, clearing presence.");
+            discordLogout();
+            lastInfo = {0};
+            last_update_time = 0;
+        }
+        wasLoggedIn = loggedIn;
+
         // asleep = presence already gone, don't poll or we'd just recreate it
         // right before the console freezes
-        if (!g_asleep) {
+        if (!g_asleep && loggedIn) {
             AppInfo info = {0};
             Result rc = get_app_info(&info);
 
@@ -300,18 +319,19 @@ int main(int argc, char* argv[])
             if (is_game_running) {
                 // user opened a game or switched a game or switched from home menu to game (tid changed)
                 if (info.tid != lastInfo.tid) {
-                    // if lastInfo.tid != 0, we already had a session running, so we include the token to update it.
-                    // if lastInfo.tid == 0, it's a brand new session, so no token is included.
-                    bool has_existing_session = (lastInfo.tid != 0);
-
                     writeToLog("[SwitchRPC] Game state changed! New TID: %016llX, Name: %s. Previous TID: %016llX",
                                (unsigned long long)info.tid, info.title_name, (unsigned long long)lastInfo.tid);
+
+                    // kill the previous game's session first, otherwise they stack
+                    // up on discord's side (and the new game gets a fresh timer)
+                    if (lastInfo.tid != 0) {
+                        discordDeleteHeadlessSession();
+                    }
 
                     lastInfo = info;
                     last_update_time = time(NULL);
 
-                    // create/update session.
-                    discordCreateHeadlessSession(info.tid, std::string(info.title_name), has_existing_session);
+                    discordCreateHeadlessSession(info.tid, std::string(info.title_name), false);
                 }
                 // the same game is still open. refresh.
                 else {

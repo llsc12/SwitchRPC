@@ -32,7 +32,9 @@ void getRefreshTokenFromFile() {
     std::ifstream file("sdmc:/config/switchrpc_token");
     if (!file.is_open()) {
         writeToLog("[Discord] No refresh token found at sdmc:/config/switchrpc_token");
-        return; 
+        // keep any in-memory token: logout deletes the file first, and we still
+        // need to authenticate to tear the sessions down before forgetting it
+        return;
     }
     
     std::string line;
@@ -365,18 +367,20 @@ void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool
 
     std::string response;
     bool success = authenticatedRequest("https://discord.com/api/v9/users/@me/headless-sessions", "POST", headers, body, &response);
+
+    // free it once here - used to get freed twice on a failed no-token request
+    // and trash the heap
+    json_object_put(json_body);
+
     if (!success) {
         writeToLog("[Discord] Failed to create/update headless session!");
-        json_object_put(json_body);
-
         // if the attempt happened with an existing session token, try again without it in case the token was the issue
         if (includeToken) {
             writeToLog("[Discord] Retrying headless session creation without session token...");
             return discordCreateHeadlessSession(titleId, titleName, false);
         }
+        return;
     }
-
-    json_object_put(json_body);
 
     json_object* json_response = json_tokener_parse(response.c_str());
     if (json_response == NULL) { 
@@ -426,4 +430,18 @@ void discordDeleteHeadlessSession() {
     sessionToken = "";
     sessionTokenExpiry = 0;
     writeToLog("[Discord] Session deleted successfully.");
+}
+
+void discordLogout() {
+    writeToLog("[Discord] Logging out - dropping session and stored tokens.");
+    // delete the active session + any leftovers. these authenticate, which may
+    // refresh (and rewrite) the token file, so we still have valid auth here.
+    discordDeleteHeadlessSession();
+    discordCleanupStaleSessions();
+    // now forget everything and make sure we stay logged out even if a refresh
+    // just rewrote the token file
+    refreshToken = "";
+    authToken = "";
+    authTokenExpiry = 0;
+    remove("sdmc:/config/switchrpc_token");
 }

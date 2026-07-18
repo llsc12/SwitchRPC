@@ -24,7 +24,7 @@ void writeToLog(const char* format, ...) {
     } 
     TimeLocationName location;
     timeGetDeviceLocationName(&location);
-    TimeZoneRule rule;
+    static TimeZoneRule rule; // 16kb, keep it off the tiny sysmodule stack
     timeLoadTimeZoneRule(&location, &rule);
     TimeCalendarTime t;
     timeToCalendarTime(&rule, timestamp, &t, nullptr);

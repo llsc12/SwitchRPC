@@ -27,3 +27,9 @@ void discordDeleteHeadlessSession();
  * Call this on startup or when waking from sleep to clean up any sessions that should no longer be active.
  */
 void discordCleanupStaleSessions();
+
+/**
+ * Tears down the active session and forgets all stored tokens.
+ * Call when the user logs out from the config app.
+ */
+void discordLogout();
