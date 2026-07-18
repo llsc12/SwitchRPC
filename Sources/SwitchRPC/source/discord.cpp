@@ -147,6 +147,10 @@ bool sendRequest(const char* url, const char* method, struct curl_slist* headers
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        // don't let a request hang forever - matters for the pre-sleep cleanup,
+        // it shouldn't hold up the console going to sleep
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
 
         // temporary fix to failing dns resolution
         struct curl_slist *dns_cache = NULL;
