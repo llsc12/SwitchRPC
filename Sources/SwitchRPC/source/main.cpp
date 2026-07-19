@@ -73,6 +73,50 @@ Result get_app_info(AppInfo *info) {
 }
 
 
+// sleep/wake via psc.
+// clocks are useless here - the whole sysmodule is frozen while asleep so time()
+// and the system tick don't move. psc gives us a real event instead. the
+// ReadySleep one fires *before* we sleep while wifi is still up, which is the
+// only moment we can kill the discord session so it doesn't hang around during
+// sleep. can't do the network call on this thread (tiny stack, and acking late
+// would stall the sleep), so it just pokes the main thread and waits.
+// id 0x5250 is a random unused id (system ones stop at 127), deps {fs, nifm} so
+// we go down before them on sleep and come back after them on wake.
+static PscPmModule g_pscModule;
+static Thread g_pscThread;
+static bool g_pscReady = false;
+static volatile bool g_pscThreadRun = true;
+static volatile bool g_wokeFromSleep = false;
+static volatile bool g_sleepPending = false;
+static volatile bool g_asleep = false;
+static UEvent g_pscWakeMain;   // psc -> main: "wake up and check your flags"
+static UEvent g_sleepPrepDone; // main -> psc: "presence gone, ok to sleep"
+
+static void pscThreadFunc(void*) {
+    while (g_pscThreadRun) {
+        // 1s timeout so we can bail out on shutdown
+        if (R_FAILED(eventWait(&g_pscModule.event, 1000000000ULL))) continue;
+
+        PscPmState state;
+        u32 flags = 0;
+        if (R_FAILED(pscPmModuleGetRequest(&g_pscModule, &state, &flags))) continue;
+
+        if (state == PscPmState_ReadySleep) {
+            // let the main thread kill the presence while wifi is still up, wait
+            // a bit for it, then ack - never block the sleep for long
+            g_sleepPending = true;
+            ueventSignal(&g_pscWakeMain);
+            waitSingle(waiterForUEvent(&g_sleepPrepDone), 4000000000ULL); // up to 4s
+        } else if (state == PscPmState_Awake) {
+            g_wokeFromSleep = true;
+            ueventSignal(&g_pscWakeMain);
+        }
+
+        pscPmModuleAcknowledge(&g_pscModule, state);
+    }
+}
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -122,7 +166,7 @@ void __appInit(void)
     if (R_FAILED(rc))
         diagAbortWithResult(MAKERESULT(Module_Libnx, LibnxError_InitFail_FS));
 
-    // timeInitialize();
+    timeInitialize(); // time() for log timestamps, the refresh timer and token expiry
     nifmInitialize(NifmServiceType_System);
 
     // Disable this if you don't want to use the SD card filesystem.
@@ -152,6 +196,7 @@ void __appInit(void)
 	pmdmntInitialize();
 	nsInitialize();
 	setInitialize();
+	pscmInitialize();
 
     // Close the service manager session.
     smExit();
@@ -160,6 +205,16 @@ void __appInit(void)
 // Service deinitialization.
 void __appExit(void)
 {
+    // stop the psc thread first, we're leaving anyway
+    g_pscThreadRun = false;
+    if (g_pscReady) {
+        threadWaitForExit(&g_pscThread);
+        threadClose(&g_pscThread);
+        pscPmModuleFinalize(&g_pscModule);
+        pscPmModuleClose(&g_pscModule);
+    }
+    pscmExit();
+
     discordDeleteHeadlessSession();
     writeToLog("[SwitchRPC] Sysmodule exiting. Goodbye!");
 
@@ -170,7 +225,7 @@ void __appExit(void)
     nsExit();
     pmdmntExit();
     nifmExit();
-    // timeExit();
+    timeExit();
 
     // Close extra services you added to __appInit here.
     fsdevUnmountAll(); // Disable this if you don't want to use the SD card filesystem.
@@ -182,7 +237,21 @@ void __appExit(void)
 #endif
 
 
-const int REFRESH_INTERVAL = 15 * 60; 
+// logged in = the config app left a refresh token on the sd card
+static bool isLoggedIn() {
+    FILE* f = fopen("sdmc:/config/switchrpc_token", "r");
+    if (f) { fclose(f); return true; }
+    return false;
+}
+
+// current unix time in seconds (real, RTC-backed)
+static u64 nowSec() {
+    u64 t = 0;
+    timeGetCurrentTime(TimeType_Default, &t);
+    return t;
+}
+
+const int REFRESH_INTERVAL = 15 * 60;
 
 int main(int argc, char* argv[])
 {
@@ -190,70 +259,142 @@ int main(int argc, char* argv[])
 
     AppInfo lastInfo = {0};
     time_t last_update_time = 0;
+    bool wasLoggedIn = false;
+    u64 accumulatedAwake = 0; // seconds of awake playtime banked for the current game
+    u64 chunkStart = 0;       // utc seconds the current awake play chunk started
 
-    // Start by cleaning up stale sessions 
+    // Start by cleaning up stale sessions
     discordCleanupStaleSessions();
-    
+
     waitForNetworkReady();
-    while (true) {
-        AppInfo info = {0};
-        Result rc = get_app_info(&info);
-        
-        bool is_game_running = R_SUCCEEDED(rc) && info.tid != 0;
 
-        if (is_game_running) {
-            // user opened a game or switched a game or switched from home menu to game (tid changed)
-            if (info.tid != lastInfo.tid) {
-                // if lastInfo.tid != 0, we already had a session running, so we include the token to update it.
-                // if lastInfo.tid == 0, it's a brand new session, so no token is included.
-                bool has_existing_session = (lastInfo.tid != 0);
-                
-                writeToLog("[SwitchRPC] Game state changed! New TID: %016llX, Name: %s. Previous TID: %016llX", 
-                           (unsigned long long)info.tid, info.title_name, (unsigned long long)lastInfo.tid);
-
-                lastInfo = info;
-                last_update_time = time(NULL);
-                
-                // create/update session.
-                discordCreateHeadlessSession(info.tid, std::string(info.title_name), has_existing_session);
-            } 
-            // the same game is still open. refresh.
-            else {
-                time_t current_time = time(NULL);
-                // check time interval
-                if (current_time - last_update_time >= REFRESH_INTERVAL) {
-                    writeToLog("[SwitchRPC] Periodic session refresh triggered for TID: %016llX", (unsigned long long)info.tid);
-                    last_update_time = current_time;
-                    
-                    // refresh session with session token that we have if any.
-                    discordCreateHeadlessSession(info.tid, std::string(info.title_name), true);
-                }
+    // register with psc and start the thread that watches for sleep/wake
+    {
+        ueventCreate(&g_pscWakeMain, true);
+        ueventCreate(&g_sleepPrepDone, true);
+        static const u32 pscDeps[] = { PscPmModuleId_Fs, PscPmModuleId_Nifm };
+        Result prc = pscmGetPmModule(&g_pscModule, (PscPmModuleId)0x5250, pscDeps,
+                                     sizeof(pscDeps) / sizeof(pscDeps[0]), true);
+        if (R_SUCCEEDED(prc)) {
+            if (R_SUCCEEDED(threadCreate(&g_pscThread, pscThreadFunc, NULL, NULL, 0x4000, 0x2C, -2))) {
+                threadStart(&g_pscThread);
+                g_pscReady = true;
+                writeToLog("[SwitchRPC] PSC power-state monitoring active.");
+            } else {
+                // no ack thread = we'd stall power transitions, so unregister
+                pscPmModuleFinalize(&g_pscModule);
+                pscPmModuleClose(&g_pscModule);
+                writeToLog("[SwitchRPC] Warning: could not start PSC thread; sleep detection disabled.");
             }
         } else {
-            // user isn't in a game. if we had a session before, delete it since the game closed, and reset lastInfo.
-            if (lastInfo.tid != 0) {
-                writeToLog("[SwitchRPC] Game closed or returned to Home Menu. Clearing session for TID: %016llX", (unsigned long long)lastInfo.tid);
-                waitForNetworkReady();
+            writeToLog("[SwitchRPC] Warning: pscmGetPmModule failed (0x%08X); sleep detection disabled.", prc);
+        }
+    }
 
-                lastInfo = {0};
-                last_update_time = 0;
-                
-                discordDeleteHeadlessSession();
+    while (true) {
+        // just woke up - resume the same game, continuing its playtime timer
+        // (the sleep period is excluded, see the sleep handler below)
+        if (g_wokeFromSleep) {
+            g_wokeFromSleep = false;
+            g_asleep = false;
+            waitForNetworkReady();
+            discordCleanupStaleSessions();
+
+            if (lastInfo.tid != 0) {
+                writeToLog("[SwitchRPC] Wake from sleep (PSC). Resuming session for TID: %016llX", (unsigned long long)lastInfo.tid);
+                chunkStart = nowSec();
+                u64 displayStart = chunkStart - accumulatedAwake; // move start forward to skip the sleep
+                discordCreateHeadlessSession(lastInfo.tid, std::string(lastInfo.title_name), displayStart, false);
+                last_update_time = time(NULL);
             }
         }
 
-        // sleep detection
-        time_t sleep_start = time(NULL);
-        svcSleepThread(10 * 1000 * 1000 * 1000ULL); 
-        time_t sleep_end = time(NULL);
+        // user hit "log out" in the config app (token file is gone) - drop the
+        // session and stop pushing until they log back in
+        bool loggedIn = isLoggedIn();
+        if (wasLoggedIn && !loggedIn && !g_asleep) {
+            writeToLog("[SwitchRPC] Logged out, clearing presence.");
+            discordLogout();
+            lastInfo = {0};
+            last_update_time = 0;
+        }
+        wasLoggedIn = loggedIn;
 
-        if (sleep_end - sleep_start > 15) {
-            writeToLog("[SwitchRPC] Wake from sleep detected! Sleep took %lld seconds. Waiting for network...", (long long)(sleep_end - sleep_start));
-            waitForNetworkReady();
-            writeToLog("[SwitchRPC] Network ready after sleep, clearing sessions.");
+        // asleep = presence already gone, don't poll or we'd just recreate it
+        // right before the console freezes
+        if (!g_asleep && loggedIn) {
+            AppInfo info = {0};
+            Result rc = get_app_info(&info);
 
-            last_update_time = 0; 
-            discordCleanupStaleSessions(); // cleanup any sessions we created prior.
+            bool is_game_running = R_SUCCEEDED(rc) && info.tid != 0;
+
+            if (is_game_running) {
+                // user opened a game or switched a game or switched from home menu to game (tid changed)
+                if (info.tid != lastInfo.tid) {
+                    writeToLog("[SwitchRPC] Game state changed! New TID: %016llX, Name: %s. Previous TID: %016llX",
+                               (unsigned long long)info.tid, info.title_name, (unsigned long long)lastInfo.tid);
+
+                    // kill the previous game's session first, otherwise they stack
+                    // up on discord's side (and the new game gets a fresh timer)
+                    if (lastInfo.tid != 0) {
+                        discordDeleteHeadlessSession();
+                    }
+
+                    lastInfo = info;
+                    accumulatedAwake = 0;
+                    chunkStart = nowSec();
+                    last_update_time = time(NULL);
+
+                    discordCreateHeadlessSession(info.tid, std::string(info.title_name), chunkStart, false);
+                }
+                // the same game is still open. refresh.
+                else {
+                    time_t current_time = time(NULL);
+                    // check time interval
+                    if (current_time - last_update_time >= REFRESH_INTERVAL) {
+                        writeToLog("[SwitchRPC] Periodic session refresh triggered for TID: %016llX", (unsigned long long)info.tid);
+                        last_update_time = current_time;
+
+                        // refresh session, keeping the same elapsed start
+                        u64 displayStart = chunkStart - accumulatedAwake;
+                        discordCreateHeadlessSession(info.tid, std::string(info.title_name), displayStart, true);
+                    }
+                }
+            } else {
+                // user isn't in a game. if we had a session before, delete it since the game closed, and reset lastInfo.
+                if (lastInfo.tid != 0) {
+                    writeToLog("[SwitchRPC] Game closed or returned to Home Menu. Clearing session for TID: %016llX", (unsigned long long)lastInfo.tid);
+                    waitForNetworkReady();
+
+                    lastInfo = {0};
+                    last_update_time = 0;
+                    accumulatedAwake = 0;
+                    chunkStart = 0;
+
+                    discordDeleteHeadlessSession();
+                }
+            }
+        }
+
+        // wait ~10s, or wake early if psc pokes us
+        waitSingle(waiterForUEvent(&g_pscWakeMain), 10ULL * 1000 * 1000 * 1000);
+
+        // about to sleep, wifi still up - kill the presence now before we freeze,
+        // stop polling until we wake, then let the psc thread ack
+        if (g_sleepPending) {
+            g_sleepPending = false;
+            writeToLog("[SwitchRPC] Sleep imminent (PSC). Clearing Discord presence before sleep.");
+
+            // bank the awake time played so far so the timer resumes minus sleep.
+            // keep lastInfo so we know which game to resume on wake.
+            if (lastInfo.tid != 0) {
+                accumulatedAwake += nowSec() - chunkStart;
+            }
+
+            discordDeleteHeadlessSession();
+            g_asleep = true;
+
+            ueventSignal(&g_sleepPrepDone);
         }
     }
 

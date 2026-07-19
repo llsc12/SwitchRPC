@@ -32,7 +32,9 @@ void getRefreshTokenFromFile() {
     std::ifstream file("sdmc:/config/switchrpc_token");
     if (!file.is_open()) {
         writeToLog("[Discord] No refresh token found at sdmc:/config/switchrpc_token");
-        return; 
+        // keep any in-memory token: logout deletes the file first, and we still
+        // need to authenticate to tear the sessions down before forgetting it
+        return;
     }
     
     std::string line;
@@ -147,6 +149,10 @@ bool sendRequest(const char* url, const char* method, struct curl_slist* headers
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        // don't let a request hang forever - matters for the pre-sleep cleanup,
+        // it shouldn't hold up the console going to sleep
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
 
         // temporary fix to failing dns resolution
         struct curl_slist *dns_cache = NULL;
@@ -319,7 +325,7 @@ void discordCleanupStaleSessions() {
     }
 }
 
-void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool includeToken) {
+void discordCreateHeadlessSession(u64 titleId, std::string titleName, u64 startEpochSec, const bool includeToken) {
     writeToLog("[Discord] Creating/Updating session for TID: %016llX (%s)", (unsigned long long)titleId, titleName.c_str());
     
     // tries to fetch eshop icon, else falls back to tinfoil media icon
@@ -341,7 +347,15 @@ void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool
     json_object_object_add(json_activity, "platform", json_object_new_string("desktop"));
     json_object_object_add(json_activity, "name", json_object_new_string(titleName.c_str()));
     json_object_object_add(json_activity, "state", json_object_new_string("Nintendo Switch"));
-    
+
+    // elapsed timer: discord shows (now - start). we pass a start moved forward
+    // to exclude sleep, so it counts real playtime. timestamps are in ms.
+    if (startEpochSec != 0) {
+        json_object* json_timestamps = json_object_new_object();
+        json_object_object_add(json_timestamps, "start", json_object_new_int64((int64_t)startEpochSec * 1000));
+        json_object_object_add(json_activity, "timestamps", json_timestamps);
+    }
+
     json_object* json_assets = json_object_new_object();
     json_object_object_add(json_assets, "large_image", json_object_new_string(iconUrl.c_str()));
     json_object_object_add(json_activity, "assets", json_assets);
@@ -361,18 +375,20 @@ void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool
 
     std::string response;
     bool success = authenticatedRequest("https://discord.com/api/v9/users/@me/headless-sessions", "POST", headers, body, &response);
+
+    // free it once here - used to get freed twice on a failed no-token request
+    // and trash the heap
+    json_object_put(json_body);
+
     if (!success) {
         writeToLog("[Discord] Failed to create/update headless session!");
-        json_object_put(json_body);
-
         // if the attempt happened with an existing session token, try again without it in case the token was the issue
         if (includeToken) {
             writeToLog("[Discord] Retrying headless session creation without session token...");
-            return discordCreateHeadlessSession(titleId, titleName, false);
+            return discordCreateHeadlessSession(titleId, titleName, startEpochSec, false);
         }
+        return;
     }
-
-    json_object_put(json_body);
 
     json_object* json_response = json_tokener_parse(response.c_str());
     if (json_response == NULL) { 
@@ -422,4 +438,18 @@ void discordDeleteHeadlessSession() {
     sessionToken = "";
     sessionTokenExpiry = 0;
     writeToLog("[Discord] Session deleted successfully.");
+}
+
+void discordLogout() {
+    writeToLog("[Discord] Logging out - dropping session and stored tokens.");
+    // delete the active session + any leftovers. these authenticate, which may
+    // refresh (and rewrite) the token file, so we still have valid auth here.
+    discordDeleteHeadlessSession();
+    discordCleanupStaleSessions();
+    // now forget everything and make sure we stay logged out even if a refresh
+    // just rewrote the token file
+    refreshToken = "";
+    authToken = "";
+    authTokenExpiry = 0;
+    remove("sdmc:/config/switchrpc_token");
 }
