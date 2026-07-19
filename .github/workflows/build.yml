@@ -17,7 +17,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache Swift toolchain
+        id: cache-swift
+        uses: actions/cache@v4
+        with:
+          path: /opt/swift
+          key: swift-${{ runner.os }}-${{ env.SWIFT_VERSION }}-${{ runner.arch }}
+
       - name: Install Swift toolchain
+        if: steps.cache-swift.outputs.cache-hit != 'true'
         run: |
           arch="$(uname -m)"
           arch_suffix=""
@@ -27,7 +35,9 @@ jobs:
           mkdir -p /opt/swift
           tar -xzf /tmp/swift.tar.gz -C /opt/swift --strip-components=1
           rm /tmp/swift.tar.gz
-          echo "/opt/swift/usr/bin" >> "$GITHUB_PATH"
+
+      - name: Add Swift to PATH
+        run: echo "/opt/swift/usr/bin" >> "$GITHUB_PATH"
 
       - name: Install Swift runtime dependencies
         run: |
@@ -37,7 +47,15 @@ jobs:
             libncurses6 libpython3.11 libsqlite3-0 libstdc++-12-dev \
             libxml2-dev libz3-dev pkg-config tzdata zlib1g-dev zip
 
+      - name: Cache devkitPro switch portlibs
+        id: cache-portlibs
+        uses: actions/cache@v4
+        with:
+          path: /opt/devkitpro/portlibs/switch
+          key: dkp-portlibs-switch-curl-switch-libjson-c-v1
+
       - name: Install switch portlibs
+        if: steps.cache-portlibs.outputs.cache-hit != 'true'
         run: |
           dkp-pacman -Sy --noconfirm switch-curl switch-libjson-c
           dkp-pacman -Scc --noconfirm
