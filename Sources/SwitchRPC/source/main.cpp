@@ -244,6 +244,13 @@ static bool isLoggedIn() {
     return false;
 }
 
+// current unix time in seconds (real, RTC-backed)
+static u64 nowSec() {
+    u64 t = 0;
+    timeGetCurrentTime(TimeType_Default, &t);
+    return t;
+}
+
 const int REFRESH_INTERVAL = 15 * 60;
 
 int main(int argc, char* argv[])
@@ -253,6 +260,8 @@ int main(int argc, char* argv[])
     AppInfo lastInfo = {0};
     time_t last_update_time = 0;
     bool wasLoggedIn = false;
+    u64 accumulatedAwake = 0; // seconds of awake playtime banked for the current game
+    u64 chunkStart = 0;       // utc seconds the current awake play chunk started
 
     // Start by cleaning up stale sessions
     discordCleanupStaleSessions();
@@ -283,18 +292,21 @@ int main(int argc, char* argv[])
     }
 
     while (true) {
-        // just woke up - rebuild presence for whatever's running, fresh timer
+        // just woke up - resume the same game, continuing its playtime timer
+        // (the sleep period is excluded, see the sleep handler below)
         if (g_wokeFromSleep) {
             g_wokeFromSleep = false;
             g_asleep = false;
-            writeToLog("[SwitchRPC] Wake from sleep (PSC). Waiting for network, then rebuilding session.");
             waitForNetworkReady();
-
-            discordDeleteHeadlessSession();
             discordCleanupStaleSessions();
 
-            lastInfo = {0};
-            last_update_time = 0;
+            if (lastInfo.tid != 0) {
+                writeToLog("[SwitchRPC] Wake from sleep (PSC). Resuming session for TID: %016llX", (unsigned long long)lastInfo.tid);
+                chunkStart = nowSec();
+                u64 displayStart = chunkStart - accumulatedAwake; // move start forward to skip the sleep
+                discordCreateHeadlessSession(lastInfo.tid, std::string(lastInfo.title_name), displayStart, false);
+                last_update_time = time(NULL);
+            }
         }
 
         // user hit "log out" in the config app (token file is gone) - drop the
@@ -329,9 +341,11 @@ int main(int argc, char* argv[])
                     }
 
                     lastInfo = info;
+                    accumulatedAwake = 0;
+                    chunkStart = nowSec();
                     last_update_time = time(NULL);
 
-                    discordCreateHeadlessSession(info.tid, std::string(info.title_name), false);
+                    discordCreateHeadlessSession(info.tid, std::string(info.title_name), chunkStart, false);
                 }
                 // the same game is still open. refresh.
                 else {
@@ -341,8 +355,9 @@ int main(int argc, char* argv[])
                         writeToLog("[SwitchRPC] Periodic session refresh triggered for TID: %016llX", (unsigned long long)info.tid);
                         last_update_time = current_time;
 
-                        // refresh session with session token that we have if any.
-                        discordCreateHeadlessSession(info.tid, std::string(info.title_name), true);
+                        // refresh session, keeping the same elapsed start
+                        u64 displayStart = chunkStart - accumulatedAwake;
+                        discordCreateHeadlessSession(info.tid, std::string(info.title_name), displayStart, true);
                     }
                 }
             } else {
@@ -353,6 +368,8 @@ int main(int argc, char* argv[])
 
                     lastInfo = {0};
                     last_update_time = 0;
+                    accumulatedAwake = 0;
+                    chunkStart = 0;
 
                     discordDeleteHeadlessSession();
                 }
@@ -368,9 +385,13 @@ int main(int argc, char* argv[])
             g_sleepPending = false;
             writeToLog("[SwitchRPC] Sleep imminent (PSC). Clearing Discord presence before sleep.");
 
+            // bank the awake time played so far so the timer resumes minus sleep.
+            // keep lastInfo so we know which game to resume on wake.
+            if (lastInfo.tid != 0) {
+                accumulatedAwake += nowSec() - chunkStart;
+            }
+
             discordDeleteHeadlessSession();
-            lastInfo = {0};
-            last_update_time = 0;
             g_asleep = true;
 
             ueventSignal(&g_sleepPrepDone);

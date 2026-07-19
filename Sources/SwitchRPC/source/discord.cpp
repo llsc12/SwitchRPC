@@ -325,7 +325,7 @@ void discordCleanupStaleSessions() {
     }
 }
 
-void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool includeToken) {
+void discordCreateHeadlessSession(u64 titleId, std::string titleName, u64 startEpochSec, const bool includeToken) {
     writeToLog("[Discord] Creating/Updating session for TID: %016llX (%s)", (unsigned long long)titleId, titleName.c_str());
     
     // tries to fetch eshop icon, else falls back to tinfoil media icon
@@ -347,7 +347,15 @@ void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool
     json_object_object_add(json_activity, "platform", json_object_new_string("desktop"));
     json_object_object_add(json_activity, "name", json_object_new_string(titleName.c_str()));
     json_object_object_add(json_activity, "state", json_object_new_string("Nintendo Switch"));
-    
+
+    // elapsed timer: discord shows (now - start). we pass a start moved forward
+    // to exclude sleep, so it counts real playtime. timestamps are in ms.
+    if (startEpochSec != 0) {
+        json_object* json_timestamps = json_object_new_object();
+        json_object_object_add(json_timestamps, "start", json_object_new_int64((int64_t)startEpochSec * 1000));
+        json_object_object_add(json_activity, "timestamps", json_timestamps);
+    }
+
     json_object* json_assets = json_object_new_object();
     json_object_object_add(json_assets, "large_image", json_object_new_string(iconUrl.c_str()));
     json_object_object_add(json_activity, "assets", json_assets);
@@ -377,7 +385,7 @@ void discordCreateHeadlessSession(u64 titleId, std::string titleName, const bool
         // if the attempt happened with an existing session token, try again without it in case the token was the issue
         if (includeToken) {
             writeToLog("[Discord] Retrying headless session creation without session token...");
-            return discordCreateHeadlessSession(titleId, titleName, false);
+            return discordCreateHeadlessSession(titleId, titleName, startEpochSec, false);
         }
         return;
     }
