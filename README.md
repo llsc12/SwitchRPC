@@ -27,6 +27,8 @@ The Discord OAuth2 flow will redirect back to `https://static.llsc12.me/discord`
 
 All pages from this subdomain are static and hosted on GitHub Pages, you can examine them with inspect element to see exactly what they do.
 
+UPDATE: I think I switched this to cf pages
+
 ## Credits
 
 - NXGallery for the webserver implementation, very epic
