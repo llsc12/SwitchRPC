@@ -174,3 +174,131 @@ void waitForNetworkReady() {
     svcSleepThread(1 * 1000 * 1000 * 1000ULL);
   }
 }
+
+
+// current process/title utilities
+
+// Return 0 on success, non-zero on error (int holds the libnx Result)
+Result get_app_info(AppInfo *info) {
+	u64 *out_pid = &info->pid;
+	u64 *out_tid = &info->tid;
+	
+	Result rc;
+	
+	rc = pmdmntGetApplicationProcessId(out_pid);
+	if (R_FAILED(rc)) return rc;
+	
+	rc = pmdmntGetProgramId(out_tid, *out_pid);
+	if (R_FAILED(rc)) return rc;
+	
+	NsApplicationControlData* appControlData = (NsApplicationControlData*)malloc(sizeof(NsApplicationControlData));
+	if (appControlData == NULL) return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
+	
+	memset(appControlData, 0, sizeof(NsApplicationControlData));
+    u64 appControlDataSize = sizeof(NsApplicationControlData);
+	NacpLanguageEntry *languageEntry;
+	
+    Result res = 0;
+	if (R_SUCCEEDED(nsGetApplicationControlData(NsApplicationControlSource_Storage, *out_tid, appControlData, appControlDataSize, &appControlDataSize))) {
+		if (R_SUCCEEDED(nacpGetLanguageEntry(&appControlData->nacp, &languageEntry))) {
+			if (languageEntry != NULL) {
+				strncpy(info->title_name, languageEntry->name, sizeof(info->title_name) - 1);
+				info->title_name[sizeof(info->title_name) - 1] = '\0';
+			} else {
+                res = MAKERESULT(Module_Libnx, LibnxError_NotFound);
+			}
+		} else {
+            res = MAKERESULT(Module_Libnx, LibnxError_NotFound);
+		}
+	} else {
+        res = MAKERESULT(Module_Libnx, LibnxError_NotFound);
+	}
+
+	free(appControlData);
+
+    return res;
+}
+
+
+// sleep/wake via psc.
+// clocks are useless here - the whole sysmodule is frozen while asleep so time()
+// and the system tick don't move. psc gives us a real event instead. the
+// ReadySleep one fires *before* we sleep while wifi is still up, which is the
+// only moment we can kill the discord session so it doesn't hang around during
+// sleep. can't do the network call on this thread (tiny stack, and acking late
+// would stall the sleep), so it just pokes the main thread and waits.
+// id 0x5250 is a random unused id (system ones stop at 127), deps {fs, nifm} so
+// we go down before them on sleep and come back after them on wake.
+
+PscPmModule g_pscModule;
+Thread g_pscThread;
+bool g_pscReady = false;
+volatile bool g_pscThreadRun = true;
+volatile bool g_wokeFromSleep = false;
+volatile bool g_sleepPending = false;
+volatile bool g_asleep = false;
+UEvent g_pscWakeMain;
+UEvent g_sleepPrepDone;
+
+void pscThreadFunc(void* arg) {
+    while (g_pscThreadRun) {
+        // 1s timeout so we can bail out on shutdown
+        if (R_FAILED(eventWait(&g_pscModule.event, 1000000000ULL))) continue;
+
+        PscPmState state;
+        u32 flags = 0;
+        if (R_FAILED(pscPmModuleGetRequest(&g_pscModule, &state, &flags))) continue;
+
+        if (state == PscPmState_ReadySleep) {
+            // let the main thread kill the presence while wifi is still up, wait
+            // a bit for it, then ack - never block the sleep for long
+            g_sleepPending = true;
+            ueventSignal(&g_pscWakeMain);
+            waitSingle(waiterForUEvent(&g_sleepPrepDone), 4000000000ULL); // up to 4s
+        } else if (state == PscPmState_Awake) {
+            g_wokeFromSleep = true;
+            ueventSignal(&g_pscWakeMain);
+        }
+
+        pscPmModuleAcknowledge(&g_pscModule, state);
+    }
+}
+
+int64_t g_timeOffset = 0;
+
+u64 getCorrectedNowSec() {
+    return (time_t)(getRawNowSec() + g_timeOffset);
+}
+
+u64 nowSec() {
+    return getCorrectedNowSec();
+}
+
+u64 getRawNowSec() {
+    u64 rawLocal = 0;
+    if (R_FAILED(timeGetCurrentTime(TimeType_Default, &rawLocal)) || rawLocal == 0) {
+        rawLocal = (u64)time(NULL);
+    }
+    return rawLocal;
+}
+
+extern time_t authTokenExpiry;
+extern time_t sessionTokenExpiry;
+
+void updateTimeOffset(int64_t newOffset) {
+    int64_t delta = newOffset - g_timeOffset;
+    g_timeOffset = newOffset;
+
+    writeToLog("[Network] Synced time offset from Discord HTTP response: %lld seconds (delta: %llds)", 
+               (long long)g_timeOffset, (long long)delta);
+
+    // Shift active expiry targets so their remaining lifespans stay valid
+    if (delta != 0) {
+        if (authTokenExpiry > 0) {
+            authTokenExpiry += delta;
+        }
+        if (sessionTokenExpiry > 0) {
+            sessionTokenExpiry += delta;
+        }
+    }
+}

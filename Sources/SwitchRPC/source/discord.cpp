@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <string>
 #include <time.h>
 #include <set>
@@ -101,6 +102,30 @@ int curlDebugCallback(CURL *handle, curl_infotype type, char *data, size_t size,
     return 0;
 }
 
+static size_t headerCallback(char* buffer, size_t size, size_t nitems, void* userdata) {
+    (void)userdata;
+    size_t totalSize = size * nitems;
+    std::string header(buffer, totalSize);
+
+    if (header.size() >= 5 && strncasecmp(header.c_str(), "Date:", 5) == 0) {
+        const char* dateStr = header.c_str() + 5;
+        while (*dateStr == ' ' || *dateStr == '\t') dateStr++;
+
+        time_t serverUtc = curl_getdate(dateStr, NULL);
+        if (serverUtc != -1) {
+            u64 rawLocal = getRawNowSec();
+            if (rawLocal > 0) {
+                int64_t newOffset = (int64_t)serverUtc - (int64_t)rawLocal;
+                if (g_timeOffset != newOffset) {
+                    updateTimeOffset(newOffset);
+                }
+            }
+        }
+    }
+
+    return totalSize;
+}
+
 // curl helper for easy requests to discord,
 // specify url, method, headers, and body as needed and a pointer to a string to store the response in, and the size of that string.
 bool sendRequest(const char* url, const char* method, struct curl_slist* headers, const char* body, std::string* response) {
@@ -153,6 +178,10 @@ bool sendRequest(const char* url, const char* method, struct curl_slist* headers
         // it shouldn't hold up the console going to sleep
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+
+        // need header data
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, NULL);
 
         // temporary fix to failing dns resolution
         struct curl_slist *dns_cache = NULL;
@@ -253,7 +282,7 @@ bool refreshAuthTokenIfNeeded() {
         writeToLog("[Discord] Successfully extracted new refresh_token");
     }
     if (json_object_object_get_ex(json_response, "expires_in", &json_expires_in)) {
-        authTokenExpiry = time(NULL) + json_object_get_int(json_expires_in);
+        authTokenExpiry = getCorrectedNowSec() + json_object_get_int(json_expires_in);
     }
 
     json_object_put(json_response); // Frees the parsed json object
@@ -405,8 +434,8 @@ void discordCreateHeadlessSession(u64 titleId, std::string titleName, u64 startE
         }
 
         sessionToken = newToken;
-        sessionTokenExpiry = time(NULL) + 900; // 15 mins to be safe.
-        
+        sessionTokenExpiry = getCorrectedNowSec() + (15 * 60);
+
         writeToLog("[Discord] Successfully extracted session token.");
     } else {
         writeToLog("[Discord] Headless session response did NOT contain a session token. That shouldn't happen if the session was created successfully and discord returned 200.");

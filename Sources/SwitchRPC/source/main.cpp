@@ -21,102 +21,6 @@
 // Size of the inner heap (adjust as necessary).
 #define INNER_HEAP_SIZE 0x80000
 
-// current process/title utilities
-
-// struct with tid and title name
-typedef struct {
-	u64 pid;          ///< process id
-	u64 tid;          ///< title id
-	char title_name[513];  ///< Title name 512 + 1 for null terminator
-} AppInfo;
-
-
-// Return 0 on success, non-zero on error (int holds the libnx Result)
-Result get_app_info(AppInfo *info) {
-	u64 *out_pid = &info->pid;
-	u64 *out_tid = &info->tid;
-	
-	Result rc;
-	
-	rc = pmdmntGetApplicationProcessId(out_pid);
-	if (R_FAILED(rc)) return rc;
-	
-	rc = pmdmntGetProgramId(out_tid, *out_pid);
-	if (R_FAILED(rc)) return rc;
-	
-	NsApplicationControlData* appControlData = (NsApplicationControlData*)malloc(sizeof(NsApplicationControlData));
-	if (appControlData == NULL) return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
-	
-	memset(appControlData, 0, sizeof(NsApplicationControlData));
-    u64 appControlDataSize = sizeof(NsApplicationControlData);
-	NacpLanguageEntry *languageEntry;
-	
-    Result res = 0;
-	if (R_SUCCEEDED(nsGetApplicationControlData(NsApplicationControlSource_Storage, *out_tid, appControlData, appControlDataSize, &appControlDataSize))) {
-		if (R_SUCCEEDED(nacpGetLanguageEntry(&appControlData->nacp, &languageEntry))) {
-			if (languageEntry != NULL) {
-				strncpy(info->title_name, languageEntry->name, sizeof(info->title_name) - 1);
-				info->title_name[sizeof(info->title_name) - 1] = '\0';
-			} else {
-                res = MAKERESULT(Module_Libnx, LibnxError_NotFound);
-			}
-		} else {
-            res = MAKERESULT(Module_Libnx, LibnxError_NotFound);
-		}
-	} else {
-        res = MAKERESULT(Module_Libnx, LibnxError_NotFound);
-	}
-
-	free(appControlData);
-
-    return res;
-}
-
-
-// sleep/wake via psc.
-// clocks are useless here - the whole sysmodule is frozen while asleep so time()
-// and the system tick don't move. psc gives us a real event instead. the
-// ReadySleep one fires *before* we sleep while wifi is still up, which is the
-// only moment we can kill the discord session so it doesn't hang around during
-// sleep. can't do the network call on this thread (tiny stack, and acking late
-// would stall the sleep), so it just pokes the main thread and waits.
-// id 0x5250 is a random unused id (system ones stop at 127), deps {fs, nifm} so
-// we go down before them on sleep and come back after them on wake.
-static PscPmModule g_pscModule;
-static Thread g_pscThread;
-static bool g_pscReady = false;
-static volatile bool g_pscThreadRun = true;
-static volatile bool g_wokeFromSleep = false;
-static volatile bool g_sleepPending = false;
-static volatile bool g_asleep = false;
-static UEvent g_pscWakeMain;   // psc -> main: "wake up and check your flags"
-static UEvent g_sleepPrepDone; // main -> psc: "presence gone, ok to sleep"
-
-static void pscThreadFunc(void*) {
-    while (g_pscThreadRun) {
-        // 1s timeout so we can bail out on shutdown
-        if (R_FAILED(eventWait(&g_pscModule.event, 1000000000ULL))) continue;
-
-        PscPmState state;
-        u32 flags = 0;
-        if (R_FAILED(pscPmModuleGetRequest(&g_pscModule, &state, &flags))) continue;
-
-        if (state == PscPmState_ReadySleep) {
-            // let the main thread kill the presence while wifi is still up, wait
-            // a bit for it, then ack - never block the sleep for long
-            g_sleepPending = true;
-            ueventSignal(&g_pscWakeMain);
-            waitSingle(waiterForUEvent(&g_sleepPrepDone), 4000000000ULL); // up to 4s
-        } else if (state == PscPmState_Awake) {
-            g_wokeFromSleep = true;
-            ueventSignal(&g_pscWakeMain);
-        }
-
-        pscPmModuleAcknowledge(&g_pscModule, state);
-    }
-}
-
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -244,13 +148,6 @@ static bool isLoggedIn() {
     return false;
 }
 
-// current unix time in seconds (real, RTC-backed)
-static u64 nowSec() {
-    u64 t = 0;
-    timeGetCurrentTime(TimeType_Default, &t);
-    return t;
-}
-
 const int REFRESH_INTERVAL = 15 * 60;
 
 int main(int argc, char* argv[])
@@ -258,10 +155,11 @@ int main(int argc, char* argv[])
     writeToLog("[SwitchRPC] Sysmodule started successfully.");
 
     AppInfo lastInfo = {0};
-    time_t last_update_time = 0;
+    u64 lastUpdateRaw = 0;
     bool wasLoggedIn = false;
     u64 accumulatedAwake = 0; // seconds of awake playtime banked for the current game
-    u64 chunkStart = 0;       // utc seconds the current awake play chunk started
+    u64 chunkStartRaw = 0;    // raw local seconds when the current awake play chunk started
+    u64 chunkStartCorrected = 0; // corrected absolute timestamp for Discord session start
 
     // Start by cleaning up stale sessions
     discordCleanupStaleSessions();
@@ -302,10 +200,11 @@ int main(int argc, char* argv[])
 
             if (lastInfo.tid != 0) {
                 writeToLog("[SwitchRPC] Wake from sleep (PSC). Resuming session for TID: %016llX", (unsigned long long)lastInfo.tid);
-                chunkStart = nowSec();
-                u64 displayStart = chunkStart - accumulatedAwake; // move start forward to skip the sleep
+                chunkStartRaw = getRawNowSec();
+                chunkStartCorrected = getCorrectedNowSec();
+                u64 displayStart = chunkStartCorrected - accumulatedAwake; // move start forward to skip the sleep
                 discordCreateHeadlessSession(lastInfo.tid, std::string(lastInfo.title_name), displayStart, false);
-                last_update_time = time(NULL);
+                lastUpdateRaw = chunkStartRaw;
             }
         }
 
@@ -316,7 +215,7 @@ int main(int argc, char* argv[])
             writeToLog("[SwitchRPC] Logged out, clearing presence.");
             discordLogout();
             lastInfo = {0};
-            last_update_time = 0;
+            lastUpdateRaw = 0;
         }
         wasLoggedIn = loggedIn;
 
@@ -342,21 +241,25 @@ int main(int argc, char* argv[])
 
                     lastInfo = info;
                     accumulatedAwake = 0;
-                    chunkStart = nowSec();
-                    last_update_time = time(NULL);
+                    chunkStartRaw = getRawNowSec();
+                    chunkStartCorrected = getCorrectedNowSec();
+                    lastUpdateRaw = chunkStartRaw;
+                    waitForNetworkReady();
+                    discordCleanupStaleSessions();
+                    // create a new session for the new game, starting its timer from now
 
-                    discordCreateHeadlessSession(info.tid, std::string(info.title_name), chunkStart, false);
+                    discordCreateHeadlessSession(info.tid, std::string(info.title_name), chunkStartCorrected, false);
                 }
                 // the same game is still open. refresh.
                 else {
-                    time_t current_time = time(NULL);
+                    u64 currentTimeRaw = getRawNowSec();
                     // check time interval
-                    if (current_time - last_update_time >= REFRESH_INTERVAL) {
+                    if (currentTimeRaw - lastUpdateRaw >= REFRESH_INTERVAL) {
                         writeToLog("[SwitchRPC] Periodic session refresh triggered for TID: %016llX", (unsigned long long)info.tid);
-                        last_update_time = current_time;
+                        lastUpdateRaw = currentTimeRaw;
 
                         // refresh session, keeping the same elapsed start
-                        u64 displayStart = chunkStart - accumulatedAwake;
+                        u64 displayStart = chunkStartCorrected - accumulatedAwake;
                         discordCreateHeadlessSession(info.tid, std::string(info.title_name), displayStart, true);
                     }
                 }
@@ -367,9 +270,10 @@ int main(int argc, char* argv[])
                     waitForNetworkReady();
 
                     lastInfo = {0};
-                    last_update_time = 0;
+                    lastUpdateRaw = 0;
                     accumulatedAwake = 0;
-                    chunkStart = 0;
+                    chunkStartRaw = 0;
+                    chunkStartCorrected = 0;
 
                     discordDeleteHeadlessSession();
                 }
@@ -388,7 +292,7 @@ int main(int argc, char* argv[])
             // bank the awake time played so far so the timer resumes minus sleep.
             // keep lastInfo so we know which game to resume on wake.
             if (lastInfo.tid != 0) {
-                accumulatedAwake += nowSec() - chunkStart;
+                accumulatedAwake += getRawNowSec() - chunkStartRaw;
             }
 
             discordDeleteHeadlessSession();
