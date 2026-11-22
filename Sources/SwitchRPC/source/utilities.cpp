@@ -31,6 +31,24 @@ static bool loadIconFromCache(const char* titleId, std::string& out_url) {
     return found;
 }
 
+static bool isValidUtf8(const char* s) {
+    const unsigned char* p = (const unsigned char*)s;
+    while (*p) {
+        if (*p < 0x20) return false;
+        if (*p < 0x80) p++;
+        else if (*p >= 0xC2 && (*p & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) p += 2;
+        else if ((*p & 0xF0) == 0xE0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) p += 3;
+        else if ((*p & 0xF8) == 0xF0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80 && (p[3] & 0xC0) == 0x80) p += 4;
+        else return false;
+    }
+    return true;
+}
+
+static bool nameOk(const char* n, size_t cap) {
+    size_t len = strnlen(n, cap);
+    return len > 0 && len < cap && isValidUtf8(n);
+}
+
 static void saveIconToCache(const char* titleId, const char* url) {
     std::ifstream infile(ICON_CACHE_PATH);
     std::string contents;
@@ -178,45 +196,197 @@ void waitForNetworkReady() {
 
 // current process/title utilities
 
+// plain GET against Nintendo's EU search API (same settings as the icon lookup)
+static bool eshopGet(const char* url, std::string& response) {
+    CURL* curl = curl_easy_init();
+    if (!curl) return false;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](char* ptr, size_t size, size_t nmemb, void* userdata) -> size_t {
+        static_cast<std::string*>(userdata)->append(ptr, size * nmemb);
+        return size * nmemb;
+    });
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+    struct curl_slist* dns_cache = NULL;
+    static const char* ips[] = { "151.101.3.52", "151.101.67.52", "151.101.131.52", "151.101.195.52" };
+    for (const char* ip : ips) {
+        char entry[64];
+        snprintf(entry, sizeof(entry), "searching.nintendo-europe.com:443:%s", ip);
+        dns_cache = curl_slist_append(dns_cache, entry);
+    }
+    curl_easy_setopt(curl, CURLOPT_RESOLVE, dns_cache);
+
+    struct curl_slist* headers = curl_slist_append(NULL, "User-Agent: SwitchRPC/1.0");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_slist_free_all(headers);
+    curl_slist_free_all(dns_cache);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        writeToLog("[eShop] cURL failed: %s", curl_easy_strerror(res));
+        return false;
+    }
+    return true;
+}
+
+// title from the EU eShop (cached). Network lookups are throttled to one per minute per title.
+static bool fetchEshopTitle(u64 titleId, std::string& out_name) {
+    // remember the last resolved name so we don't re-read the cache file every poll
+    static u64 s_nameTid = 0;
+    static std::string s_name;
+    if (s_nameTid == titleId && !s_name.empty()) { out_name = s_name; return true; }
+
+    char tid[17] = {0};
+    snprintf(tid, sizeof(tid), "%016llx", (unsigned long long)titleId);
+    char key[32];
+    snprintf(key, sizeof(key), "%s_name", tid);
+
+    if (loadIconFromCache(key, out_name) && nameOk(out_name.c_str(), out_name.size() + 1)) {
+        s_nameTid = titleId;
+        s_name = out_name;
+        return true;
+    }
+
+    static u64 s_tid = 0, s_at = 0;
+    u64 now = getRawNowSec();
+    if (s_tid == titleId && now - s_at < 60) return false;
+    s_tid = titleId;
+    s_at = now;
+
+    char url[512];
+    snprintf(url, sizeof(url),
+        "https://searching.nintendo-europe.com/en/select"
+        "?q=application_id_s%%3A%s"
+        "&wt=json&fq=type%%3AGAME"
+        "&fl=application_id_s%%2Ctitle"
+        "&rows=5"
+        "&sort=dates_released_dts+asc",
+        tid);
+
+    std::string response;
+    if (!eshopGet(url, response)) return false;
+
+    json_object* root = json_tokener_parse(response.c_str());
+    if (!root) {
+        writeToLog("[eShop] Failed to parse title response");
+        return false;
+    }
+
+    bool found = false;
+    json_object *resp_obj, *docs;
+    if (json_object_object_get_ex(root, "response", &resp_obj) &&
+        json_object_object_get_ex(resp_obj, "docs", &docs)) {
+        int n = json_object_array_length(docs);
+        for (int i = 0; i < n && !found; i++) {
+            json_object* doc = json_object_array_get_idx(docs, i);
+            json_object *id_obj, *title_obj;
+            if (json_object_object_get_ex(doc, "application_id_s", &id_obj) &&
+                json_object_object_get_ex(doc, "title", &title_obj)) {
+                const char* id = json_object_get_string(id_obj);
+                const char* title = json_object_get_string(title_obj);
+                if (id && title && strcmp(id, tid) == 0 && nameOk(title, 128)) {
+                    out_name = title;
+                    found = true;
+                }
+            }
+        }
+    }
+    json_object_put(root);
+
+    if (found) {
+        writeToLog("[eShop] Found title for %s: %s", tid, out_name.c_str());
+        saveIconToCache(key, out_name.c_str());
+        s_nameTid = titleId;
+        s_name = out_name;
+    } else {
+        writeToLog("[eShop] No title found in EU eShop for %s", tid);
+    }
+    return found;
+}
+
 // Return 0 on success, non-zero on error (int holds the libnx Result)
 Result get_app_info(AppInfo *info) {
 	u64 *out_pid = &info->pid;
 	u64 *out_tid = &info->tid;
-	
+
 	Result rc;
-	
+
 	rc = pmdmntGetApplicationProcessId(out_pid);
 	if (R_FAILED(rc)) return rc;
-	
+
 	rc = pmdmntGetProgramId(out_tid, *out_pid);
 	if (R_FAILED(rc)) return rc;
-	
+
 	NsApplicationControlData* appControlData = (NsApplicationControlData*)malloc(sizeof(NsApplicationControlData));
 	if (appControlData == NULL) return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
-	
+
 	memset(appControlData, 0, sizeof(NsApplicationControlData));
-    u64 appControlDataSize = sizeof(NsApplicationControlData);
-	NacpLanguageEntry *languageEntry;
-	
-    Result res = 0;
-	if (R_SUCCEEDED(nsGetApplicationControlData(NsApplicationControlSource_Storage, *out_tid, appControlData, appControlDataSize, &appControlDataSize))) {
-		if (R_SUCCEEDED(nacpGetLanguageEntry(&appControlData->nacp, &languageEntry))) {
-			if (languageEntry != NULL) {
-				strncpy(info->title_name, languageEntry->name, sizeof(info->title_name) - 1);
-				info->title_name[sizeof(info->title_name) - 1] = '\0';
-			} else {
-                res = MAKERESULT(Module_Libnx, LibnxError_NotFound);
-			}
-		} else {
-            res = MAKERESULT(Module_Libnx, LibnxError_NotFound);
+	u64 appControlDataSize = sizeof(NsApplicationControlData);
+	NacpLanguageEntry *languageEntry = NULL;
+
+	Result nsRc = nsGetApplicationControlData(NsApplicationControlSource_Storage, *out_tid,
+	                                          appControlData, appControlDataSize, &appControlDataSize);
+	NacpLanguageEntry *chosen = NULL;
+
+	static u64 s_loggedTid = 0, s_failedTid = 0; // log once per title, not every poll
+
+	if (R_SUCCEEDED(nsRc)) {
+		// 1) the system-language entry, if its name is sane
+		if (R_SUCCEEDED(nacpGetLanguageEntry(&appControlData->nacp, &languageEntry)) &&
+		    languageEntry && nameOk(languageEntry->name, sizeof(languageEntry->name))) {
+			chosen = languageEntry;
+		}
+		// 2) otherwise the first language entry with a sane name
+		for (int i = 0; !chosen && i < 16; i++) {
+			NacpLanguageEntry *e = &appControlData->nacp.lang[i];
+			if (nameOk(e->name, sizeof(e->name))) chosen = e;
+		}
+		if (!chosen && s_loggedTid != *out_tid) {
+			s_loggedTid = *out_tid;
+			writeToLog("[SwitchRPC] No usable NACP name for %016llX (control data 0x%llX bytes, icon magic %02X%02X%02X)",
+			           (unsigned long long)*out_tid, (unsigned long long)appControlDataSize,
+			           appControlData->icon[0], appControlData->icon[1], appControlData->icon[2]);
 		}
 	} else {
-        res = MAKERESULT(Module_Libnx, LibnxError_NotFound);
+		if (s_failedTid != *out_tid) {
+			s_failedTid = *out_tid;
+			writeToLog("[SwitchRPC] nsGetApplicationControlData failed: 0x%08X", nsRc);
+		}
+		free(appControlData);
+		return MAKERESULT(Module_Libnx, LibnxError_NotFound);
+	}
+	
+	bool haveName = false;
+	if (chosen) {
+		strncpy(info->title_name, chosen->name, sizeof(info->title_name) - 1);
+		info->title_name[sizeof(info->title_name) - 1] = '\0';
+		haveName = true;
 	}
 
+	// release the ~144 KB control-data buffer BEFORE any network call:
+	// the sysmodule heap is only 512 KB and TLS needs most of the rest
 	free(appControlData);
+	appControlData = NULL;
 
-    return res;
+	if (!haveName) {
+		// NACP name unusable: try the eShop title, then the title ID
+		std::string eshopName;
+		if (fetchEshopTitle(*out_tid, eshopName)) {
+			strncpy(info->title_name, eshopName.c_str(), sizeof(info->title_name) - 1);
+			info->title_name[sizeof(info->title_name) - 1] = '\0';
+		} else {
+			snprintf(info->title_name, sizeof(info->title_name), "Title %016llX", (unsigned long long)*out_tid);
+		}
+	}
+
+	return 0;
 }
 
 
